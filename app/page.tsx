@@ -1203,17 +1203,6 @@ export default function Home() {
                 <div className="pointer-events-none absolute left-[-50%] top-[54%] w-[min(420px,72vw)] rounded-xl border border-fuchsia-300/35 bg-slate-950/72 px-3 py-2 text-xs text-slate-100 backdrop-blur-sm md:text-sm">
                   <p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-fuchsia-200/85">You (last)</p>
                   <p>{lastTranscript}</p>
-                  {lastEmotion ? (
-                    <p className="mt-1 text-[10px] uppercase tracking-[0.1em] text-amber-300/95">
-                      Emotion: {lastEmotion}
-                      {typeof lastEmotionScore === "number" ? ` (${Math.round(lastEmotionScore * 100)}%)` : ""}
-                    </p>
-                  ) : null}
-                  {topEmotionDetail ? (
-                    <p className="mt-1 text-[10px] uppercase tracking-[0.1em] text-cyan-300/95">
-                      Top score: {topEmotionDetail.emotion} ({Math.round(topEmotionDetail.score * 100)}%)
-                    </p>
-                  ) : null}
                   {recognizedEmotion && recognizedEmotionVisual ? (
                     <p
                       className="mt-2 text-[11px] font-semibold uppercase tracking-[0.1em]"
