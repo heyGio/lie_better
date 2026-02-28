@@ -1,0 +1,19 @@
+# Speech Emotion Recognition – Python dependencies
+# Install with:  pip install -r requirements.txt
+#
+# For CUDA support make sure you have the matching torch+CUDA build.
+# RTX 4070 / CUDA 13.1 — use the cu131 wheel index:
+#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu131
+#
+# Then install the rest:
+#   pip install -r requirements.txt
+
+torch
+torchaudio
+transformers>=4.40
+librosa>=0.10
+soundfile
+fastapi>=0.111
+uvicorn[standard]>=0.29
+python-multipart
+numpy

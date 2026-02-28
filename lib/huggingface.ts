@@ -9,6 +9,12 @@ const DEFAULT_HF_EMOTION_URL =
   process.env.HF_EMOTION_API_URL ??
   `${ROUTER_HF_INFERENCE_PREFIX}${DEFAULT_HF_EMOTION_MODEL}`;
 
+/**
+ * Local Python emotion service (services/emotion/serve.py).
+ * Set EMOTION_LOCAL_URL=http://localhost:5050 in .env to use it.
+ */
+const LOCAL_EMOTION_URL = process.env.EMOTION_LOCAL_URL ?? "";
+
 const EMOTIONS = ["angry", "disgust", "fear", "happy", "neutral", "sad", "surprise"] as const;
 
 export type PlayerEmotion = (typeof EMOTIONS)[number];
@@ -134,6 +140,60 @@ function buildEmptyScoreMap() {
 }
 
 export async function classifySpeechEmotion(file: File): Promise<SpeechEmotionResult> {
+  // ── Local GPU inference (services/emotion/serve.py) ──
+  if (LOCAL_EMOTION_URL) {
+    return classifyViaLocalService(file);
+  }
+
+  // ── Remote HF Inference API ──
+  return classifyViaHuggingFace(file);
+}
+
+// ─── Local Python service ─────────────────────────────────────────────────────
+
+async function classifyViaLocalService(file: File): Promise<SpeechEmotionResult> {
+  const formData = new FormData();
+  formData.append("file", file, file.name || "audio.webm");
+
+  const url = `${LOCAL_EMOTION_URL.replace(/\/+$/, "")}/classify`;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      body: formData,
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("Local emotion service request timed out.");
+    }
+    throw new Error(`Unable to reach local emotion service at ${LOCAL_EMOTION_URL}.`);
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (!response.ok) {
+    const details = await response.text().catch(() => "Unknown error");
+    throw new Error(`Local emotion service error (${response.status}): ${details.slice(0, 300)}`);
+  }
+
+  const payload = (await response.json().catch(() => null)) as unknown;
+  const predictions = parsePredictions(payload);
+
+  if (predictions.length === 0) {
+    throw new Error("Local emotion service returned no predictions.");
+  }
+
+  return buildResult(predictions);
+}
+
+// ─── Remote Hugging Face Inference API ────────────────────────────────────────
+
+async function classifyViaHuggingFace(file: File): Promise<SpeechEmotionResult> {
   const token = getApiToken();
   if (!token) {
     throw new Error("HUGGINGFACE_API_TOKEN (or HF_TOKEN) is missing.");
@@ -211,6 +271,12 @@ export async function classifySpeechEmotion(file: File): Promise<SpeechEmotionRe
     throw new Error("Hugging Face returned no emotion predictions.");
   }
 
+  return buildResult(predictions);
+}
+
+// ─── Shared result builder ────────────────────────────────────────────────────
+
+function buildResult(predictions: HfEmotionPrediction[]): SpeechEmotionResult {
   const scores = buildEmptyScoreMap();
   for (const prediction of predictions) {
     if (!isRecord(prediction)) continue;
@@ -227,7 +293,7 @@ export async function classifySpeechEmotion(file: File): Promise<SpeechEmotionRe
   const [label, score] = sorted[0] ?? ["neutral", 0];
 
   if (score <= 0) {
-    throw new Error("Hugging Face emotion scores are empty.");
+    throw new Error("Emotion scores are empty.");
   }
 
   return {
