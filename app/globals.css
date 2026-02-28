@@ -23,6 +23,68 @@ body {
   box-shadow: 0 0 35px rgb(6 182 212 / 0.1);
 }
 
+.phone-frame {
+  position: relative;
+  border-radius: 2.4rem;
+  padding: 0.8rem;
+  border: 1px solid rgb(56 189 248 / 0.45);
+  background:
+    linear-gradient(145deg, rgb(8 47 73 / 0.55), rgb(15 23 42 / 0.94)),
+    rgb(2 6 23);
+  box-shadow:
+    0 0 40px rgb(34 211 238 / 0.2),
+    inset 0 0 25px rgb(34 211 238 / 0.08);
+}
+
+.phone-screen {
+  min-height: 760px;
+  border-radius: 1.8rem;
+  border: 1px solid rgb(34 211 238 / 0.3);
+  background:
+    linear-gradient(180deg, rgb(15 23 42 / 0.92), rgb(2 6 23 / 0.98)),
+    rgb(2 6 23);
+  padding: 1rem;
+}
+
+.phone-notch {
+  width: 42%;
+  max-width: 180px;
+  height: 1.2rem;
+  margin: 0 auto 0.8rem;
+  border-radius: 9999px;
+  border: 1px solid rgb(34 211 238 / 0.3);
+  background: rgb(15 23 42);
+  box-shadow: 0 0 14px rgb(34 211 238 / 0.2);
+}
+
+.holo-outline {
+  border: 1px solid rgb(34 211 238 / 0.35);
+  background: linear-gradient(180deg, rgb(6 182 212 / 0.1), rgb(15 23 42 / 0.7));
+  border-radius: 1rem;
+}
+
+.pulse-dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 9999px;
+  background: rgb(16 185 129);
+  box-shadow: 0 0 12px rgb(16 185 129 / 0.75);
+  animation: dot-pulse 1.3s ease-in-out infinite;
+}
+
+@keyframes dot-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+
+  50% {
+    transform: scale(0.82);
+    opacity: 0.55;
+  }
+}
+
 .danger-glow {
   animation: danger-pulse 0.95s ease-in-out infinite;
 }
