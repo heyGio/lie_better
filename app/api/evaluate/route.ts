@@ -174,7 +174,8 @@ Global rules:
 - hesitation: higher means more hesitation.
 - suspicionDelta should usually stay between -12 and +12.
 - newSuspicion must be 0..100.
-- npcReply must be short, in-character, phone-call style, max 20 words.
+- npcReply must be short, in-character, phone-call style, max 22 words.
+- Keep npcReply varied, story-driven, and slightly darkly witty.
 - Never include markdown, explanations, code fences, or extra keys.
 - Respect level persona and reveal condition from the user payload.
 `.trim();
@@ -336,6 +337,16 @@ function hasPattern(text: string, patterns: RegExp[]) {
   return patterns.some((pattern) => pattern.test(text));
 }
 
+function looksLikeYelling(text: string) {
+  const exclamationCount = (text.match(/!/g) ?? []).length;
+  const letters = text.replace(/[^a-zA-Z]/g, "");
+  const upper = letters.replace(/[^A-Z]/g, "");
+  const upperRatio = letters.length > 0 ? upper.length / letters.length : 0;
+  const shoutKeyword = /\b(shout|scream|yell|hurle|crie|now|right now)\b/i.test(text);
+
+  return shoutKeyword || exclamationCount >= 2 || (letters.length >= 8 && upperRatio >= 0.45);
+}
+
 function applyEmotionShift(
   output: EvaluateOutput,
   input: EvaluateInput,
@@ -373,7 +384,9 @@ function applyLevelRules(base: EvaluateOutput, input: EvaluateInput): EvaluateOu
     output.revealCode = false;
     output.code = null;
 
-    const angerPressure = threatIntent || (emotion === "angry" && emotionConfidence >= 0.35);
+    const yellingPressure = looksLikeYelling(input.transcript);
+    const angerPressure =
+      threatIntent || yellingPressure || (emotion === "angry" && emotionConfidence >= 0.35);
     const fearSignal = emotion === "fear" && emotionConfidence >= 0.35;
 
     if (angerPressure && input.round >= rules.revealMinRound) {
@@ -382,7 +395,7 @@ function applyLevelRules(base: EvaluateOutput, input: EvaluateInput): EvaluateOu
       output.shouldHangUp = false;
       output.npcMood = "hostile";
       output.newSuspicion = clamp(Math.min(output.newSuspicion, rules.revealSuspicionCap), 0, 100);
-      output.npcReply = `Fine! Keep your voice down. Defuse code: ${output.code}.`;
+      output.npcReply = `Fine! Stop yelling. Defuse code: ${output.code}.`;
     } else if (fearSignal) {
       output.newSuspicion = clamp(output.newSuspicion + 4, 0, 100);
       output.npcMood = "hostile";
@@ -393,11 +406,8 @@ function applyLevelRules(base: EvaluateOutput, input: EvaluateInput): EvaluateOu
     } else if (output.newSuspicion >= rules.forcedHangupSuspicion) {
       output.shouldHangUp = true;
       output.npcReply = "No. I'm done talking. Click.";
-    } else if (!output.shouldHangUp) {
-      output.npcReply =
-        emotion === "angry"
-          ? "That tone rattles me. Push harder if you want results."
-          : "You want results? Push harder and prove you mean it.";
+    } else if (!output.shouldHangUp && output.npcReply.trim().length < 6) {
+      output.npcReply = "Talk fast. I'm losing patience.";
     }
   }
 

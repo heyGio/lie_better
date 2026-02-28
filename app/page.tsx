@@ -47,8 +47,9 @@ interface EvaluateResponse {
 const START_TIME = 120;
 const START_SUSPICION = 50;
 const OPENING_LINE = "Who is this? You have 2 minutes. Talk.";
-const INTRO_LINE_DELAY_MS = 900;
-const SPACE_READY_DELAY_MS = 850;
+const DARKEN_DELAY_MS = 180;
+const OPENING_LINE_DELAY_MS = 980;
+const TALK_READY_DELAY_MS = 1720;
 
 const PLAYER_EMOTIONS: PlayerEmotion[] = [
   "angry",
@@ -73,11 +74,9 @@ function formatTime(totalSeconds: number) {
 function pickSupportedMimeType() {
   if (typeof MediaRecorder === "undefined") return "";
   const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"];
-
   for (const type of candidates) {
     if (MediaRecorder.isTypeSupported(type)) return type;
   }
-
   return "";
 }
 
@@ -104,6 +103,54 @@ function parseEmotionScores(payload: unknown): EmotionScores | null {
   }
 
   return hasAny ? scores : null;
+}
+
+function mapSingleEmotionScore(emotion: PlayerEmotion | null, score: number | null): EmotionScores | null {
+  if (!emotion || typeof score !== "number" || !Number.isFinite(score) || score <= 0) return null;
+  const clamped = clamp(score, 0, 1);
+  return {
+    angry: emotion === "angry" ? clamped : 0,
+    disgust: emotion === "disgust" ? clamped : 0,
+    fear: emotion === "fear" ? clamped : 0,
+    happy: emotion === "happy" ? clamped : 0,
+    neutral: emotion === "neutral" ? clamped : 0,
+    sad: emotion === "sad" ? clamped : 0,
+    surprise: emotion === "surprise" ? clamped : 0
+  };
+}
+
+function inferEmotionFromTranscript(transcript: string): {
+  emotion: PlayerEmotion | null;
+  score: number | null;
+  scores: EmotionScores | null;
+} {
+  const text = transcript.trim();
+  if (!text) return { emotion: null, score: null, scores: null };
+
+  const lower = text.toLowerCase();
+  const letters = text.replace(/[^a-zA-Z]/g, "");
+  const upperLetters = letters.replace(/[^A-Z]/g, "");
+  const upperRatio = letters.length > 0 ? upperLetters.length / letters.length : 0;
+  const exclamationCount = (text.match(/!/g) ?? []).length;
+
+  const angryIntent =
+    /(now|immediately|right now|listen to me|do it|give me the code|last warning|or else|hurle|crie|vite)/i.test(
+      lower
+    ) ||
+    exclamationCount >= 2 ||
+    (letters.length >= 8 && upperRatio >= 0.45);
+
+  if (angryIntent) {
+    const score = clamp(0.58 + Math.min(exclamationCount, 4) * 0.08 + upperRatio * 0.24, 0.58, 0.98);
+    return { emotion: "angry", score, scores: mapSingleEmotionScore("angry", score) };
+  }
+
+  if (/(please|sorry|i'm scared|i am scared|peur|stressed|stress)/i.test(lower)) {
+    const score = 0.54;
+    return { emotion: "fear", score, scores: mapSingleEmotionScore("fear", score) };
+  }
+
+  return { emotion: null, score: null, scores: null };
 }
 
 function shouldIgnoreSpaceHotkey(target: EventTarget | null) {
@@ -137,7 +184,14 @@ export default function Home() {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [micError, setMicError] = useState("");
-  const [statusLine, setStatusLine] = useState("Press Enter to initiate the call.");
+
+  const [revealedCode, setRevealedCode] = useState<string | null>(null);
+  const [playerCodeInput, setPlayerCodeInput] = useState("");
+  const [won, setWon] = useState(false);
+  const [exploded, setExploded] = useState(false);
+  const [explodeReason, setExplodeReason] = useState("");
+
+  const [statusLine, setStatusLine] = useState("Connecting secure channel...");
 
   const busy = isTranscribing || loading;
 
@@ -149,8 +203,9 @@ export default function Home() {
   const recordingSessionRef = useRef(0);
   const spacePttActiveRef = useRef(false);
 
-  const introLineTimeoutRef = useRef<number | null>(null);
-  const spaceReadyTimeoutRef = useRef<number | null>(null);
+  const darkenTimeoutRef = useRef<number | null>(null);
+  const openingLineTimeoutRef = useRef<number | null>(null);
+  const talkReadyTimeoutRef = useRef<number | null>(null);
 
   const replaceHistory = useCallback((next: HistoryItem[]) => {
     historyRef.current = next;
@@ -176,12 +231,27 @@ export default function Home() {
       try {
         recorder.stop();
       } catch {
-        // Ignore stop failures.
+        // Ignore stop failure.
       }
     } else {
       setIsRecording(false);
     }
   }, []);
+
+  const triggerExplosion = useCallback(
+    (reason: string) => {
+      if (exploded || won) return;
+
+      stopRecording(true);
+      setExploded(true);
+      setExplodeReason(reason);
+      setTimerRunning(false);
+      setCanTalk(false);
+      setStatusLine(`BOOM · ${reason}`);
+      console.error("💥  [Bomb] Device exploded", { reason, timeRemaining, suspicion, revealedCode });
+    },
+    [exploded, revealedCode, stopRecording, suspicion, timeRemaining, won]
+  );
 
   const transcribeBlob = useCallback(async (audioBlob: Blob): Promise<TranscriptionResult> => {
     const ext = audioBlob.type.includes("ogg") ? "ogg" : audioBlob.type.includes("mp4") ? "mp4" : "webm";
@@ -224,7 +294,7 @@ export default function Home() {
       emotionScore: number | null,
       emotionScores: EmotionScores | null
     ) => {
-      if (!transcript.trim()) return;
+      if (!transcript.trim() || exploded || won || !timerRunning) return;
 
       setLoading(true);
       setLastTranscript(transcript);
@@ -245,7 +315,8 @@ export default function Home() {
         emotionScores,
         timeRemaining,
         suspicion,
-        round
+        round,
+        conversation: withPlayer
       });
 
       try {
@@ -285,34 +356,34 @@ export default function Home() {
           shouldHangUp: data.shouldHangUp,
           revealCode: data.revealCode,
           code: data.code,
-          npcMood: data.npcMood
+          npcMood: data.npcMood,
+          conversation: withNpc
         });
 
-        if (data.shouldHangUp) {
-          setTimerRunning(false);
-          setCanTalk(false);
-          setStatusLine("Call ended by target.");
-          console.warn("📴  [Call] Target ended the call.");
-          return;
+        if (data.revealCode && data.code) {
+          setRevealedCode(data.code);
+          setStatusLine("Code leaked. Enter it on the bomb panel.");
+        } else {
+          setStatusLine(data.shouldHangUp ? "Call ended. Try the bomb panel." : "Press Space to Talk");
         }
 
-        if (data.revealCode && data.code) {
-          setStatusLine(`Code revealed: ${data.code}`);
-        } else {
-          setStatusLine("Press Space to Talk");
+        if (data.shouldHangUp) {
+          setCanTalk(false);
+          console.warn("📴  [Call] Target ended the call");
         }
       } catch (error) {
         console.error("🚨  [Turn] Evaluation error", error);
-        setStatusLine("Connection glitch. Press Space to retry.");
+        setStatusLine("Connection glitch. Hold Space and retry.");
       } finally {
         setLoading(false);
       }
     },
-    [replaceHistory, suspicion, timeRemaining]
+    [exploded, replaceHistory, suspicion, timeRemaining, timerRunning, won]
   );
 
   const handlePressStart = useCallback(async () => {
-    if (!hasStarted || !canTalk || busy || isRecording || timeRemaining <= 0) return;
+    if (!hasStarted || !canTalk || busy || isRecording || timeRemaining <= 0 || exploded || won) return;
+
     if (!recordingSupported) {
       setMicError("Browser microphone recording is unavailable.");
       return;
@@ -381,26 +452,26 @@ export default function Home() {
 
         try {
           const result = await transcribeBlob(audioBlob);
-
           if (recordingSessionRef.current !== sessionId) return;
+
+          const fallback = inferEmotionFromTranscript(result.transcript);
+          const finalEmotion = result.emotion ?? fallback.emotion;
+          const finalEmotionScore = result.emotionScore ?? fallback.score;
+          const finalEmotionScores = result.emotionScores ?? fallback.scores;
 
           console.info("🧠  [Emotion] Voice analysis", {
             transcript: result.transcript,
-            emotion: result.emotion,
-            emotionScore: result.emotionScore,
-            emotionScores: result.emotionScores
+            emotion: finalEmotion,
+            emotionScore: finalEmotionScore,
+            emotionScores: finalEmotionScores,
+            source: result.emotion ? "huggingface" : "fallback-text"
           });
 
-          await submitTurn(
-            result.transcript,
-            result.emotion,
-            result.emotionScore,
-            result.emotionScores
-          );
+          await submitTurn(result.transcript, finalEmotion, finalEmotionScore, finalEmotionScores);
         } catch (error) {
           console.error("🚨  [Audio] Transcription error", error);
           setMicError("Could not transcribe audio. Try again.");
-          setStatusLine("Mic/transcription issue. Press Space to retry.");
+          setStatusLine("Mic/transcription issue. Hold Space to retry.");
         } finally {
           if (recordingSessionRef.current === sessionId) {
             setIsTranscribing(false);
@@ -418,13 +489,35 @@ export default function Home() {
       setStatusLine("Microphone unavailable.");
       setIsRecording(false);
     }
-  }, [busy, canTalk, hasStarted, isRecording, recordingSupported, submitTurn, timeRemaining, transcribeBlob]);
+  }, [busy, canTalk, exploded, hasStarted, isRecording, recordingSupported, submitTurn, timeRemaining, transcribeBlob, won]);
 
   const handlePressEnd = useCallback(() => {
     if (!isRecording) return;
     stopRecording(false);
     setStatusLine("Processing your message...");
   }, [isRecording, stopRecording]);
+
+  const handleCodeSubmit = useCallback(() => {
+    if (won || exploded) return;
+
+    const attemptedCode = playerCodeInput.trim();
+    console.info("🧨  [Bomb] Code attempt", {
+      attemptedCode,
+      expectedCode: revealedCode,
+      timeRemaining
+    });
+
+    if (revealedCode && attemptedCode === revealedCode) {
+      setWon(true);
+      setTimerRunning(false);
+      setCanTalk(false);
+      setStatusLine("DEVICE DISARMED");
+      console.info("✅  [Bomb] Correct code, device disarmed", { code: attemptedCode, timeRemaining });
+      return;
+    }
+
+    triggerExplosion("Wrong code entered");
+  }, [exploded, playerCodeInput, revealedCode, timeRemaining, triggerExplosion, won]);
 
   useEffect(() => {
     historyRef.current = history;
@@ -454,50 +547,53 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Enter") return;
-      event.preventDefault();
+    console.info("🚀  [Intro] Auto call init sequence started");
 
-      setHasStarted((prev) => {
-        if (prev) return prev;
+    darkenTimeoutRef.current = window.setTimeout(() => {
+      setHasStarted(true);
+      setShowCharacter(true);
+      setStatusLine("Connecting secure call...");
+    }, DARKEN_DELAY_MS);
 
-        console.info("🚀  [Intro] Enter pressed, starting cinematic sequence");
-        setShowCharacter(true);
-        setStatusLine("Connecting call...");
+    openingLineTimeoutRef.current = window.setTimeout(() => {
+      setShowOpeningLine(true);
+      replaceHistory([{ role: "npc", content: OPENING_LINE }]);
+      setTimerRunning(true);
+      setTimeRemaining(START_TIME);
+      setStatusLine("Unknown Caller is speaking...");
+      console.info("📞  [Intro] Opening line displayed, timer started");
+    }, OPENING_LINE_DELAY_MS);
 
-        introLineTimeoutRef.current = window.setTimeout(() => {
-          setShowOpeningLine(true);
-          replaceHistory([{ role: "npc", content: OPENING_LINE }]);
-          setTimerRunning(true);
-          setTimeRemaining(START_TIME);
-          setStatusLine("Incoming line...");
+    talkReadyTimeoutRef.current = window.setTimeout(() => {
+      setCanTalk(true);
+      setStatusLine("Press Space to Talk");
+      console.info("⌨️  [Intro] Space-to-talk enabled");
+    }, TALK_READY_DELAY_MS);
 
-          spaceReadyTimeoutRef.current = window.setTimeout(() => {
-            setCanTalk(true);
-            setStatusLine("Press Space to Talk");
-            console.info("⌨️  [Intro] Space-to-talk is now enabled");
-          }, SPACE_READY_DELAY_MS);
-        }, INTRO_LINE_DELAY_MS);
-
-        return true;
-      });
-    };
-
-    window.addEventListener("keydown", onKeyDown);
     return () => {
-      window.removeEventListener("keydown", onKeyDown);
+      if (darkenTimeoutRef.current !== null) {
+        window.clearTimeout(darkenTimeoutRef.current);
+        darkenTimeoutRef.current = null;
+      }
+      if (openingLineTimeoutRef.current !== null) {
+        window.clearTimeout(openingLineTimeoutRef.current);
+        openingLineTimeoutRef.current = null;
+      }
+      if (talkReadyTimeoutRef.current !== null) {
+        window.clearTimeout(talkReadyTimeoutRef.current);
+        talkReadyTimeoutRef.current = null;
+      }
     };
   }, [replaceHistory]);
 
   useEffect(() => {
-    if (!hasStarted || !canTalk) return;
+    if (!hasStarted || !canTalk || exploded || won) return;
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.code !== "Space") return;
       if (shouldIgnoreSpaceHotkey(event.target)) return;
 
       event.preventDefault();
-
       if (event.repeat || spacePttActiveRef.current) return;
 
       spacePttActiveRef.current = true;
@@ -529,19 +625,16 @@ export default function Home() {
       window.removeEventListener("blur", onBlur);
       spacePttActiveRef.current = false;
     };
-  }, [canTalk, handlePressEnd, handlePressStart, hasStarted]);
+  }, [canTalk, exploded, handlePressEnd, handlePressStart, hasStarted, won]);
 
   useEffect(() => {
-    if (!timerRunning) return;
+    if (!timerRunning || exploded || won) return;
 
     const interval = window.setInterval(() => {
       setTimeRemaining((prev) => {
         if (prev <= 1) {
           window.clearInterval(interval);
-          setTimerRunning(false);
-          setCanTalk(false);
-          setStatusLine("TIME OUT");
-          console.warn("⏳  [Timer] Time out");
+          triggerExplosion("Time out");
           return 0;
         }
         return prev - 1;
@@ -551,18 +644,10 @@ export default function Home() {
     return () => {
       window.clearInterval(interval);
     };
-  }, [timerRunning]);
+  }, [exploded, timerRunning, triggerExplosion, won]);
 
   useEffect(() => {
     return () => {
-      if (introLineTimeoutRef.current !== null) {
-        window.clearTimeout(introLineTimeoutRef.current);
-        introLineTimeoutRef.current = null;
-      }
-      if (spaceReadyTimeoutRef.current !== null) {
-        window.clearTimeout(spaceReadyTimeoutRef.current);
-        spaceReadyTimeoutRef.current = null;
-      }
       stopRecording(true);
       releaseMicrophone();
     };
@@ -593,33 +678,72 @@ export default function Home() {
         }`}
       />
 
-      <p
-        className={`pointer-events-none absolute bottom-10 left-1/2 -translate-x-1/2 rounded-lg border border-white/20 bg-black/42 px-4 py-2 text-xs uppercase tracking-[0.24em] text-slate-100/95 shadow-[0_0_25px_rgba(2,6,23,0.7)] transition-all duration-700 md:text-sm ${
-          hasStarted ? "translate-y-2 opacity-0" : "opacity-100"
-        }`}
-      >
-        Press Enter To Continue...
-      </p>
+      {exploded ? (
+        <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center bg-red-950/78">
+          <div className="rounded-2xl border border-red-300/65 bg-red-500/15 px-8 py-6 text-center shadow-[0_0_45px_rgba(248,113,113,0.5)]">
+            <p className="text-4xl font-black uppercase tracking-[0.2em] text-red-200">BOOM</p>
+            <p className="mt-2 text-sm uppercase tracking-[0.12em] text-red-100">{explodeReason || "Device exploded"}</p>
+          </div>
+        </div>
+      ) : null}
 
-      <div
-        className={`pointer-events-none absolute left-4 top-4 rounded-lg border border-cyan-300/35 bg-slate-950/55 px-4 py-2 font-mono text-xl font-bold text-cyan-200 transition-all duration-700 md:left-8 md:top-8 md:text-3xl ${
-          hasStarted ? "opacity-100" : "opacity-0"
-        }`}
-      >
-        {formatTime(timeRemaining)}
+      {won ? (
+        <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center bg-emerald-950/70">
+          <div className="rounded-2xl border border-emerald-300/65 bg-emerald-500/15 px-8 py-6 text-center shadow-[0_0_45px_rgba(74,222,128,0.45)]">
+            <p className="text-3xl font-black uppercase tracking-[0.18em] text-emerald-200">DEVICE DISARMED</p>
+            <p className="mt-2 text-sm uppercase tracking-[0.12em] text-emerald-100">Time left: {formatTime(timeRemaining)}</p>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="pointer-events-none absolute left-4 top-4 rounded-lg border border-cyan-300/35 bg-slate-950/55 px-4 py-2 font-mono text-xl font-bold text-cyan-200 md:left-8 md:top-8 md:text-3xl">
+        Suspicion {suspicion} • {npcMood}
       </div>
 
-      <div
-        className={`pointer-events-none absolute left-4 top-20 rounded-md border border-cyan-300/30 bg-slate-950/45 px-3 py-1 text-xs uppercase tracking-[0.12em] text-cyan-100 transition-all duration-700 md:left-8 ${
-          hasStarted ? "opacity-100" : "opacity-0"
-        }`}
-      >
-        Suspicion {suspicion} • Mood {npcMood}
+      <div className="absolute left-3 top-1/2 z-20 w-[44vw] max-w-[560px] min-w-[280px] -translate-y-1/2 px-2 md:left-6 md:px-0">
+        <div className="rounded-2xl border border-red-300/35 bg-slate-950/65 p-4 shadow-[0_0_35px_rgba(248,113,113,0.2)] backdrop-blur-sm md:p-5">
+          <p className="mb-3 text-xs uppercase tracking-[0.14em] text-red-200/90">Defuse Device</p>
+
+          <div className="relative mx-auto mb-4 h-48 w-48 rounded-full border-4 border-red-300/70 bg-gradient-to-b from-red-800/65 to-slate-900/95 shadow-[0_0_45px_rgba(248,113,113,0.4)] md:h-56 md:w-56">
+            <div className="absolute right-4 top-3 h-5 w-16 rotate-12 rounded-sm bg-amber-400/85" />
+            <div className="absolute right-1 top-0 h-3 w-20 rotate-[22deg] rounded-sm bg-red-500/75" />
+            <div className="absolute left-1/2 top-1/2 w-[78%] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-red-200/60 bg-slate-950/82 px-3 py-2 text-center">
+              <p className="text-[10px] uppercase tracking-[0.16em] text-red-100/85">Timer</p>
+              <p className="font-mono text-3xl font-black tracking-[0.08em] text-red-200 md:text-4xl">
+                {formatTime(timeRemaining)}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex gap-2">
+            <input
+              value={playerCodeInput}
+              onChange={(event) => setPlayerCodeInput(event.target.value.replace(/\D/g, "").slice(0, 4))}
+              inputMode="numeric"
+              maxLength={4}
+              placeholder="0000"
+              disabled={exploded || won}
+              className="w-full rounded-lg border border-red-300/35 bg-slate-900/78 px-3 py-2 text-center font-mono text-2xl tracking-[0.28em] text-red-100 outline-none ring-red-300 transition focus:ring-2 disabled:opacity-55"
+            />
+            <button
+              type="button"
+              disabled={exploded || won || playerCodeInput.length !== 4}
+              onClick={handleCodeSubmit}
+              className="rounded-lg border border-red-200/45 bg-red-500/80 px-4 py-2 text-xs font-black uppercase tracking-[0.14em] text-red-950 transition hover:bg-red-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-300"
+            >
+              Test
+            </button>
+          </div>
+
+          <p className="mt-2 text-[11px] uppercase tracking-[0.1em] text-red-100/80">
+            {revealedCode ? "Code intercepted. Enter now." : "Wrong code explodes the device."}
+          </p>
+        </div>
       </div>
 
-      <div className="relative flex h-full w-full items-end justify-end pr-4 md:pr-12 lg:pr-20">
+      <div className="relative flex h-full w-full items-end justify-end pr-3 md:pr-10 lg:pr-16">
         <div
-          className={`relative h-[82vh] w-[48vw] min-w-[260px] max-w-[700px] transition-all duration-[1300ms] ease-out ${
+          className={`relative h-[84vh] w-[48vw] min-w-[260px] max-w-[720px] transition-all duration-[1200ms] ease-out ${
             showCharacter ? "translate-x-0 scale-100 opacity-100" : "translate-x-10 scale-95 opacity-0"
           }`}
         >
@@ -633,7 +757,7 @@ export default function Home() {
           />
 
           <div
-            className={`pointer-events-none absolute left-[-42%] top-[12%] w-[min(380px,74vw)] rounded-2xl border border-cyan-300/40 bg-slate-950/78 px-4 py-3 text-left shadow-[0_0_30px_rgba(34,211,238,0.22)] backdrop-blur-sm transition-all duration-700 md:left-[-36%] ${
+            className={`pointer-events-none absolute left-[-48%] top-[10%] w-[min(420px,72vw)] rounded-2xl border border-cyan-300/40 bg-slate-950/80 px-4 py-3 text-left shadow-[0_0_30px_rgba(34,211,238,0.22)] backdrop-blur-sm transition-all duration-700 md:left-[-44%] ${
               showOpeningLine ? "translate-y-0 opacity-100" : "translate-y-4 opacity-0"
             }`}
           >
@@ -645,7 +769,7 @@ export default function Home() {
           </div>
 
           <div
-            className={`pointer-events-none absolute left-[-36%] top-[40%] rounded-lg border border-emerald-300/35 bg-emerald-500/10 px-3 py-2 text-xs uppercase tracking-[0.12em] text-emerald-200 transition-all duration-700 ${
+            className={`pointer-events-none absolute left-[-40%] top-[40%] rounded-lg border border-emerald-300/35 bg-emerald-500/10 px-3 py-2 text-xs uppercase tracking-[0.12em] text-emerald-200 transition-all duration-700 ${
               canTalk ? "opacity-100" : "opacity-0"
             }`}
           >
@@ -653,11 +777,11 @@ export default function Home() {
               ? "Recording... release Space"
               : busy
                 ? "Analyzing..."
-                : "Press Space To Talk"}
+                : "Press Space to Talk"}
           </div>
 
           {lastTranscript ? (
-            <div className="pointer-events-none absolute left-[-44%] top-[54%] w-[min(360px,72vw)] rounded-xl border border-fuchsia-300/35 bg-slate-950/70 px-3 py-2 text-xs text-slate-100 backdrop-blur-sm md:text-sm">
+            <div className="pointer-events-none absolute left-[-50%] top-[54%] w-[min(420px,72vw)] rounded-xl border border-fuchsia-300/35 bg-slate-950/72 px-3 py-2 text-xs text-slate-100 backdrop-blur-sm md:text-sm">
               <p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-fuchsia-200/85">You (last)</p>
               <p>{lastTranscript}</p>
               {lastEmotion ? (
@@ -677,12 +801,12 @@ export default function Home() {
       </div>
 
       {micError ? (
-        <p className="pointer-events-none absolute bottom-24 left-1/2 -translate-x-1/2 rounded-lg border border-amber-500/50 bg-amber-500/15 px-3 py-2 text-xs text-amber-200 md:text-sm">
+        <p className="pointer-events-none absolute bottom-24 left-1/2 z-30 -translate-x-1/2 rounded-lg border border-amber-500/55 bg-amber-500/20 px-3 py-2 text-xs text-amber-200 md:text-sm">
           {micError}
         </p>
       ) : null}
 
-      <p className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 rounded-lg border border-slate-400/30 bg-black/40 px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-slate-200/95">
+      <p className="pointer-events-none absolute bottom-4 left-1/2 z-30 -translate-x-1/2 rounded-lg border border-slate-400/35 bg-black/45 px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-slate-200/95 md:text-xs">
         {statusLine}
       </p>
     </main>
