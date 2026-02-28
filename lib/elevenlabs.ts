@@ -4,6 +4,8 @@ export const DEFAULT_ELEVENLABS_MODEL =
   process.env.ELEVENLABS_MODEL_ID ?? "eleven_flash_v2_5";
 export const DEFAULT_ELEVENLABS_VOICE =
   process.env.ELEVENLABS_VOICE_ID ?? "zYcjlYFOd3taleS0gkk3";
+export const DEFAULT_ELEVENLABS_VOICE_LEVEL_2 =
+  process.env.ELEVENLABS_VOICE_ID_LEVEL_2 ?? "ocZQ262SsZb9RIxcQBOj";
 export const DEFAULT_ELEVENLABS_OUTPUT_FORMAT =
   process.env.ELEVENLABS_OUTPUT_FORMAT ?? "mp3_22050_32";
 export const DEFAULT_ELEVENLABS_STREAMING_LATENCY =
@@ -116,7 +118,7 @@ export async function synthesizeWithElevenLabs({
   const response = await requestElevenLabsTts({
     text,
     modelId,
-    voiceId,
+    voiceId: voiceId ?? DEFAULT_ELEVENLABS_VOICE,
     streamMode: false,
     voiceSettings
   });
@@ -136,7 +138,7 @@ export async function synthesizeWithElevenLabsStream({
   const response = await requestElevenLabsTts({
     text,
     modelId,
-    voiceId,
+    voiceId: voiceId ?? DEFAULT_ELEVENLABS_VOICE,
     streamMode: true,
     voiceSettings
   });

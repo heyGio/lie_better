@@ -56,8 +56,10 @@ interface EvaluateResponse {
 
 const START_TIME = 120;
 const START_SUSPICION = 50;
-const OPENING_LINE =
+const OPENING_LINE_LEVEL_1 =
   "I planted a bomb at your hackathon. You have 2 minutes. Convince me to give you the code.";
+const OPENING_LINE_LEVEL_2 =
+  "Mrrp! I took your shiny Suica card. It's mine now! You're not getting on that train.";
 const DARKEN_DELAY_MS = 180;
 const OPENING_LINE_DELAY_MS = 980;
 const BOMB_TIMER_APPEAR_DELAY_MS = 2000;
@@ -191,6 +193,7 @@ export default function Home() {
   const [showCharacter, setShowCharacter] = useState(false);
   const [showOpeningLine, setShowOpeningLine] = useState(false);
   const [canTalk, setCanTalk] = useState(false);
+  const [currentLevel, setCurrentLevel] = useState<1 | 2>(1);
 
   const [timeRemaining, setTimeRemaining] = useState(START_TIME);
   const [timerRunning, setTimerRunning] = useState(false);
@@ -235,6 +238,7 @@ export default function Home() {
   const discardRecordingRef = useRef(false);
   const recordingSessionRef = useRef(0);
   const audioUnlockedRef = useRef(false);
+  const bgmAudioRef = useRef<HTMLAudioElement | null>(null);
 
   const darkenTimeoutRef = useRef<number | null>(null);
   const openingLineTimeoutRef = useRef<number | null>(null);
@@ -290,7 +294,7 @@ export default function Home() {
 
   const playExplosionSound = useCallback(async () => {
     stopExplosionSound();
-    const audio = new Audio("/assets/explosion_earrape.mp3");
+    const audio = new Audio("/assets/booom.mp3");
     audio.preload = "auto";
     audio.volume = 1;
     audio.currentTime = 0;
@@ -321,14 +325,14 @@ export default function Home() {
   }, [stopExplosionSound]);
 
   const speakNpcLine = useCallback(
-    async (text: string, mood: NpcMood, suspicionLevel: number, onDone?: () => void) => {
+    async (text: string, mood: NpcMood, suspicionLevel: number, level: number, onDone?: () => void) => {
       const cleaned = text.trim();
       if (!cleaned) return;
 
       stopNpcVoice();
       const params = new URLSearchParams({
         text: cleaned,
-        level: "1",
+        level: String(level),
         suspicion: String(Math.round(clamp(suspicionLevel, 0, 100))),
         mood
       });
@@ -500,7 +504,7 @@ export default function Home() {
             history: withPlayer,
             round,
             stage,
-            level: 1,
+            level: currentLevel,
             playerEmotion: emotion,
             emotionScore
           })
@@ -549,7 +553,7 @@ export default function Home() {
           setStatusLine(`Stage ${nextStage}/${LEVEL1_FINAL_STAGE}.`);
         }
 
-        void speakNpcLine(data.npcReply, data.npcMood, data.newSuspicion);
+        void speakNpcLine(data.npcReply, data.npcMood, data.newSuspicion, currentLevel);
 
         if (data.shouldHangUp) {
           const reason = data.failureReason?.trim() || "Failed dialogue stage";
@@ -562,7 +566,7 @@ export default function Home() {
         setLoading(false);
       }
     },
-    [exploded, replaceHistory, speakNpcLine, stage, suspicion, timeRemaining, timerRunning, won]
+    [currentLevel, exploded, replaceHistory, speakNpcLine, stage, suspicion, timeRemaining, timerRunning, won]
   );
 
   const startAutoRecording = useCallback(async () => {
@@ -758,14 +762,14 @@ export default function Home() {
       setWon(true);
       setTimerRunning(false);
       setCanTalk(false);
-      setStatusLine("DEVICE DISARMED");
+      setStatusLine(currentLevel === 1 ? "DEVICE DISARMED" : "SUICA RECOVERED");
       console.info("✅  [Bomb] Correct code, device disarmed", { code: attemptedCode, timeRemaining });
       return;
     }
 
     setStatusLine("Wrong code. Try again before timer ends.");
     console.warn("⚠️  [Bomb] Wrong code, no instant explosion (timer remains the only fail condition).");
-  }, [exploded, playerCodeInput, revealedCode, timeRemaining, won]);
+  }, [currentLevel, exploded, playerCodeInput, revealedCode, timeRemaining, won]);
 
   const clearIntroSequenceTimers = useCallback(() => {
     if (darkenTimeoutRef.current !== null) {
@@ -786,8 +790,12 @@ export default function Home() {
     }
   }, []);
 
-  const startGameSequence = useCallback((forceRestart: boolean = false) => {
+  const startGameSequence = useCallback((forceRestart: boolean = false, levelToPlay?: 1 | 2) => {
     if (hasStarted && !forceRestart) return;
+
+    if (levelToPlay) {
+      setCurrentLevel(levelToPlay);
+    }
 
     void unlockAudioPlayback();
     clearIntroSequenceTimers();
@@ -837,10 +845,11 @@ export default function Home() {
 
     openingLineTimeoutRef.current = window.setTimeout(() => {
       setShowOpeningLine(true);
-      replaceHistory([{ role: "npc", content: OPENING_LINE }]);
+      const startLine = (levelToPlay ?? currentLevel) === 1 ? OPENING_LINE_LEVEL_1 : OPENING_LINE_LEVEL_2;
+      replaceHistory([{ role: "npc", content: startLine }]);
       setTimerRunning(true);
       setStatusLine("Unknown Caller is speaking...");
-      void speakNpcLine(OPENING_LINE, "suspicious", START_SUSPICION, () => {
+      void speakNpcLine(startLine, "suspicious", START_SUSPICION, (levelToPlay ?? currentLevel), () => {
         setCanTalk(true);
         setStatusLine("Your turn. Click the mic button to record.");
         console.info("🎙️  [Intro] Click-to-record mode enabled after opening line");
@@ -849,6 +858,7 @@ export default function Home() {
     }, OPENING_LINE_DELAY_MS);
     talkReadyTimeoutRef.current = null;
   }, [
+    currentLevel,
     clearIntroSequenceTimers,
     hasStarted,
     replaceHistory,
@@ -861,8 +871,8 @@ export default function Home() {
 
   const handleRetry = useCallback(() => {
     console.info("🔁  [Game] Retry requested");
-    startGameSequence(true);
-  }, [startGameSequence]);
+    startGameSequence(true, currentLevel);
+  }, [startGameSequence, currentLevel]);
 
   useEffect(() => {
     historyRef.current = history;
@@ -907,6 +917,44 @@ export default function Home() {
       window.removeEventListener("keydown", onEnterDown);
     };
   }, [hasStarted, startGameSequence]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    if (!bgmAudioRef.current) {
+      const audio = new Audio("/assets/Concrete_Empire_2026-02-28T212713.mp3");
+      audio.loop = true;
+      audio.volume = 0.15;
+      bgmAudioRef.current = audio;
+    }
+
+    const bgm = bgmAudioRef.current;
+    const shouldPlay = (!hasStarted || currentLevel === 1) && !exploded && !won;
+
+    const tryPlay = () => {
+      if (shouldPlay && bgm.paused) {
+        bgm.play().catch(() => { });
+      }
+    };
+
+    if (shouldPlay) {
+      tryPlay();
+    } else {
+      bgm.pause();
+    }
+
+    const handleInteraction = () => {
+      if (shouldPlay) tryPlay();
+    };
+
+    window.addEventListener("click", handleInteraction, { passive: true });
+    window.addEventListener("keydown", handleInteraction, { passive: true });
+
+    return () => {
+      window.removeEventListener("click", handleInteraction);
+      window.removeEventListener("keydown", handleInteraction);
+    };
+  }, [hasStarted, currentLevel, exploded, won]);
 
   useEffect(() => {
     if (!exploded) return;
@@ -1011,6 +1059,9 @@ export default function Home() {
       stopNpcVoice();
       stopExplosionSound();
       releaseMicrophone();
+      if (bgmAudioRef.current) {
+        bgmAudioRef.current.pause();
+      }
     };
   }, [clearIntroSequenceTimers, releaseMicrophone, stopExplosionSound, stopNpcVoice, stopRecording]);
 
@@ -1018,14 +1069,17 @@ export default function Home() {
     for (let i = history.length - 1; i >= 0; i -= 1) {
       if (history[i].role === "npc") return history[i].content;
     }
-    return OPENING_LINE;
-  }, [history]);
+    return currentLevel === 1 ? OPENING_LINE_LEVEL_1 : OPENING_LINE_LEVEL_2;
+  }, [history, currentLevel]);
 
   const characterImageSrc = useMemo(() => {
+    if (currentLevel === 2) {
+      return "/assets/mochi_cat.png";
+    }
     if (revealedCode) return "/assets/defeat.png";
     const playerTurns = history.filter((line) => line.role === "player").length;
     return playerTurns >= 2 ? "/assets/angrycat.png" : "/assets/cat2.png";
-  }, [history, revealedCode]);
+  }, [history, revealedCode, currentLevel]);
 
   const topEmotionDetail = useMemo(() => {
     if (!lastEmotionScores) return null;
@@ -1046,31 +1100,52 @@ export default function Home() {
         {statusLine}
       </p>
 
+      <div className="absolute inset-0 z-0">
+        <Image
+          src={currentLevel === 1 ? "/assets/background_1.png" : "/assets/shibuya.png"}
+          alt="Background"
+          fill
+          priority
+          sizes="100vw"
+          className="object-cover"
+        />
+      </div>
+
       <div
-        className={`pointer-events-none absolute inset-0 bg-black transition-opacity duration-[1400ms] ease-out ${
-          hasStarted && !destroyedBackgroundVisible ? "opacity-60" : "opacity-0"
-        }`}
+        className={`pointer-events-none absolute inset-0 z-10 bg-black transition-opacity duration-[1400ms] ease-out ${hasStarted && !destroyedBackgroundVisible ? "opacity-60" : "opacity-0"
+          }`}
       />
 
       {!hasStarted ? (
-        <button
-          type="button"
-          onClick={() => startGameSequence()}
-          className="absolute inset-0 z-30 flex items-center justify-center focus:outline-none"
-          aria-label="Start game"
-        >
-          <div className="pointer-events-none relative overflow-hidden rounded-3xl border border-cyan-100/65 bg-black/88 px-7 py-6 text-center shadow-[0_0_75px_rgba(34,211,238,0.4)] backdrop-blur-[3px] md:px-12 md:py-9">
-            <div className="absolute inset-0 bg-gradient-to-b from-slate-950/55 via-black/70 to-black/85" />
-            <div className="relative z-10">
+        <div className="absolute inset-0 z-30 flex items-center justify-center">
+          <div className="pointer-events-auto relative flex flex-col items-center gap-6 overflow-hidden rounded-3xl border border-cyan-100/65 bg-black/88 px-7 py-6 text-center shadow-[0_0_75px_rgba(34,211,238,0.4)] backdrop-blur-[3px] md:px-12 md:py-9">
+            <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-slate-950/55 via-black/70 to-black/85" />
+            <div className="relative z-10 flex flex-col items-center">
               <h1 className="text-5xl font-black uppercase tracking-[0.24em] text-white drop-shadow-[0_0_26px_rgba(165,243,252,0.9)] md:text-7xl">
                 {INTRO_TITLE}
               </h1>
-              <p className="mt-5 animate-pulse text-sm font-semibold tracking-[0.32em] text-white/90 md:text-lg">
-                {INTRO_PROMPT}
+              <p className="mt-5 text-sm font-semibold tracking-[0.32em] text-white/90 md:text-lg">
+                CHOOSE LEVEL
               </p>
+              <div className="mt-8 flex gap-4">
+                <button
+                  type="button"
+                  onClick={() => startGameSequence(false, 1)}
+                  className="rounded-lg border border-cyan-400 bg-cyan-950 px-6 py-3 font-bold uppercase tracking-widest text-cyan-50 shadow-[0_0_15px_rgba(34,211,238,0.4)] transition hover:bg-cyan-800"
+                >
+                  Level 1
+                </button>
+                <button
+                  type="button"
+                  onClick={() => startGameSequence(false, 2)}
+                  className="rounded-lg border border-fuchsia-400 bg-fuchsia-950 px-6 py-3 font-bold uppercase tracking-widest text-fuchsia-50 shadow-[0_0_15px_rgba(232,121,249,0.4)] transition hover:bg-fuchsia-800"
+                >
+                  Level 2
+                </button>
+              </div>
             </div>
           </div>
-        </button>
+        </div>
       ) : null}
 
       {exploded ? (
@@ -1078,12 +1153,12 @@ export default function Home() {
           {destroyedBackgroundVisible ? (
             <div className="pointer-events-none absolute inset-0 z-[38]">
               <Image
-                src="/assets/background_blowup.png"
+                src={currentLevel === 1 ? "/assets/background_blowup.png" : "/assets/shibuya.png"}
                 alt="Devastated background"
                 fill
                 priority
                 sizes="100vw"
-                className="object-cover"
+                className={`object-cover ${currentLevel === 2 ? "grayscale contrast-125" : ""}`}
               />
             </div>
           ) : null}
@@ -1091,9 +1166,18 @@ export default function Home() {
           {explosionFlashVisible ? <div className="pointer-events-none absolute inset-0 z-[45] bg-white/95" /> : null}
 
           {destroyedBackgroundVisible && !explosionFlashVisible ? (
-            <p className="pointer-events-none absolute bottom-7 left-1/2 z-[46] -translate-x-1/2 animate-pulse rounded-md border border-red-100/55 bg-black/58 px-4 py-1 text-xs font-semibold uppercase tracking-[0.22em] text-red-50 md:bottom-9 md:text-sm">
-              Press Enter to Retry
-            </p>
+            <div className="pointer-events-auto absolute bottom-7 left-1/2 z-[46] flex -translate-x-1/2 flex-col items-center gap-4 md:bottom-9">
+              <p className="rounded-md border border-red-100/55 bg-black/58 px-4 py-1 text-xs font-semibold uppercase tracking-[0.22em] text-red-50 md:text-sm">
+                {currentLevel === 1 ? "DEVICE DETONATED" : "MISSED THE TRAIN"}
+              </p>
+              <button
+                type="button"
+                onClick={handleRetry}
+                className="animate-pulse rounded-md border border-white/40 bg-white/10 px-6 py-2 text-sm font-bold uppercase tracking-widest text-white shadow-lg backdrop-blur"
+              >
+                Retry
+              </button>
+            </div>
           ) : null}
         </>
       ) : null}
@@ -1102,79 +1186,100 @@ export default function Home() {
         <>
           {won ? (
             <div className="absolute inset-0 z-40 flex items-center justify-center bg-emerald-950/70">
-              <div className="rounded-2xl border border-emerald-300/65 bg-emerald-500/15 px-8 py-6 text-center shadow-[0_0_45px_rgba(74,222,128,0.45)]">
-                <p className="text-3xl font-black uppercase tracking-[0.18em] text-emerald-200">DEVICE DISARMED</p>
+              <div className="pointer-events-auto rounded-2xl border border-emerald-300/65 bg-emerald-500/15 px-8 py-6 text-center shadow-[0_0_45px_rgba(74,222,128,0.45)]">
+                <p className="text-3xl font-black uppercase tracking-[0.18em] text-emerald-200">
+                  {currentLevel === 1 ? "DEVICE DISARMED" : "GOT SUICA BACK - CAUGHT THE TRAIN"}
+                </p>
                 <p className="mt-2 text-sm uppercase tracking-[0.12em] text-emerald-100">Time left: {formatTime(timeRemaining)}</p>
-                <button
-                  type="button"
-                  onClick={handleRetry}
-                  className="mt-5 rounded-lg border border-emerald-200/80 bg-gradient-to-b from-emerald-200 to-emerald-700 px-6 py-2 text-sm font-black uppercase tracking-[0.18em] text-emerald-950 transition hover:brightness-110"
-                >
-                  Retry
-                </button>
+
+                <div className="mt-6 flex justify-center gap-4">
+                  {currentLevel === 1 ? (
+                    <button
+                      type="button"
+                      onClick={() => startGameSequence(true, 2)}
+                      className="rounded-lg border border-emerald-200/80 bg-gradient-to-b from-emerald-200 to-emerald-700 px-6 py-2 text-sm font-black uppercase tracking-[0.18em] text-emerald-950 transition hover:brightness-110"
+                    >
+                      Proceed to Level 2
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={handleRetry}
+                    className="rounded-lg border border-emerald-400 bg-transparent px-6 py-2 text-sm font-black uppercase tracking-[0.18em] text-emerald-200 transition hover:bg-emerald-900/50"
+                  >
+                    Retry
+                  </button>
+                </div>
               </div>
             </div>
           ) : null}
 
-          <div className="pointer-events-none absolute right-4 top-4 rounded-lg border border-cyan-300/45 bg-slate-950/70 px-3 py-2 font-mono text-sm font-black uppercase tracking-[0.16em] text-cyan-100 md:right-8 md:top-8 md:text-base">
-            Stage {stage}/{LEVEL1_FINAL_STAGE}
-          </div>
+          {currentLevel === 1 && (
+            <div className="pointer-events-none absolute right-4 top-4 z-20 rounded-lg border border-cyan-300/45 bg-slate-950/70 px-3 py-2 font-mono text-sm font-black uppercase tracking-[0.16em] text-cyan-100 md:right-8 md:top-8 md:text-base">
+              Stage {stage}/{LEVEL1_FINAL_STAGE}
+            </div>
+          )}
 
-          <div className="absolute left-3 top-[58%] z-20 w-[32vw] max-w-[520px] min-w-[230px] -translate-y-1/2 px-1 md:left-7 md:w-[29vw] md:px-0">
-            <div className="relative mx-auto aspect-[1365/768] w-full">
-              <Image
-                src="/assets/bomb2.png"
-                alt="Defuse device"
-                fill
-                priority
-                sizes="(max-width: 768px) 32vw, 29vw"
-                className="object-contain drop-shadow-[0_0_30px_rgba(248,113,113,0.42)]"
-              />
+          {currentLevel === 2 && (
+            <div className="pointer-events-none absolute right-4 top-4 z-20 rounded-lg border border-fuchsia-300/45 bg-slate-950/70 px-3 py-2 font-mono text-sm font-black uppercase tracking-[0.16em] text-fuchsia-100 md:right-8 md:top-8 md:text-base">
+              Last Train In: {formatTime(timeRemaining)}
+            </div>
+          )}
 
-              <div
-                className={`pointer-events-none absolute left-[31.2%] top-[31.8%] flex h-[19.2%] w-[33.4%] items-center justify-center transition-opacity duration-500 ${
-                  isBombTimerVisible ? "opacity-100" : "opacity-0"
-                }`}
-              >
-                <span
-                  className={`font-mono text-[clamp(1.02rem,2.5vw,2.45rem)] font-black tracking-[0.24em] text-red-500 drop-shadow-[0_0_18px_rgba(239,68,68,1)] ${
-                    timeRemaining <= 30 ? "animate-pulse text-red-200" : ""
-                  }`}
-                >
-                  {formatTime(timeRemaining)}
-                </span>
-              </div>
-
-              <div className="absolute left-[37.95%] top-[61.9%] h-[10.9%] w-[14.9%]">
-                <input
-                  value={playerCodeInput}
-                  onChange={(event) => {
-                    const nextCode = event.target.value.replace(/\D/g, "").slice(0, 4);
-                    setPlayerCodeInput(nextCode);
-
-                    if (nextCode.length === 4 && !exploded && !won) {
-                      playCodeClick();
-                      setStatusLine("Verifying code...");
-                      window.setTimeout(() => {
-                        handleCodeSubmit(nextCode);
-                      }, 70);
-                    }
-                  }}
-                  inputMode="numeric"
-                  maxLength={4}
-                  placeholder="0000"
-                  disabled={exploded || won}
-                  className="h-full w-full rounded-[0.32rem] border border-[#8f8a73] bg-[#d7d0ad] px-[0.22rem] text-center font-mono text-[clamp(0.56rem,1.18vw,0.95rem)] font-black tracking-[0.2em] text-slate-800 shadow-[inset_0_0_10px_rgba(15,23,42,0.18)] outline-none ring-red-500/65 transition focus:ring-2 disabled:opacity-65"
+          {currentLevel === 1 && (
+            <div className="absolute left-3 top-[58%] z-20 w-[32vw] max-w-[520px] min-w-[230px] -translate-y-1/2 px-1 md:left-7 md:w-[29vw] md:px-0">
+              <div className="relative mx-auto aspect-[1365/768] w-full">
+                <Image
+                  src="/assets/bomb2.png"
+                  alt="Defuse device"
+                  fill
+                  priority
+                  sizes="(max-width: 768px) 32vw, 29vw"
+                  className="object-contain drop-shadow-[0_0_30px_rgba(248,113,113,0.42)]"
                 />
+
+                <div
+                  className={`pointer-events-none absolute left-[31.2%] top-[31.8%] flex h-[19.2%] w-[33.4%] items-center justify-center transition-opacity duration-500 ${isBombTimerVisible ? "opacity-100" : "opacity-0"
+                    }`}
+                >
+                  <span
+                    className={`font-mono text-[clamp(1.02rem,2.5vw,2.45rem)] font-black tracking-[0.24em] text-red-500 drop-shadow-[0_0_18px_rgba(239,68,68,1)] ${timeRemaining <= 30 ? "animate-pulse text-red-200" : ""
+                      }`}
+                  >
+                    {formatTime(timeRemaining)}
+                  </span>
+                </div>
+
+                <div className="absolute left-[37.95%] top-[61.9%] h-[10.9%] w-[14.9%]">
+                  <input
+                    value={playerCodeInput}
+                    onChange={(event) => {
+                      const nextCode = event.target.value.replace(/\D/g, "").slice(0, 4);
+                      setPlayerCodeInput(nextCode);
+
+                      if (nextCode.length === 4 && !exploded && !won) {
+                        playCodeClick();
+                        setStatusLine("Verifying code...");
+                        window.setTimeout(() => {
+                          handleCodeSubmit(nextCode);
+                        }, 70);
+                      }
+                    }}
+                    inputMode="numeric"
+                    maxLength={4}
+                    placeholder="0000"
+                    disabled={exploded || won}
+                    className="h-full w-full rounded-[0.32rem] border border-[#8f8a73] bg-[#d7d0ad] px-[0.22rem] text-center font-mono text-[clamp(0.56rem,1.18vw,0.95rem)] font-black tracking-[0.2em] text-slate-800 shadow-[inset_0_0_10px_rgba(15,23,42,0.18)] outline-none ring-red-500/65 transition focus:ring-2 disabled:opacity-65"
+                  />
+                </div>
               </div>
             </div>
-          </div>
+          )}
 
-          <div className="relative flex h-full w-full items-end justify-end pr-3 md:pr-10 lg:pr-16">
+          <div className="relative z-20 flex h-full w-full items-end justify-end pr-3 md:pr-10 lg:pr-16">
             <div
-              className={`relative h-[84vh] w-[48vw] min-w-[260px] max-w-[720px] transition-all duration-[1200ms] ease-out ${
-                showCharacter ? "translate-x-0 scale-100 opacity-100" : "translate-x-10 scale-95 opacity-0"
-              }`}
+              className={`relative h-[84vh] w-[48vw] min-w-[260px] max-w-[720px] transition-all duration-[1200ms] ease-out ${showCharacter ? "translate-x-0 scale-100 opacity-100" : "translate-x-10 scale-95 opacity-0"
+                }`}
             >
               <Image
                 src={characterImageSrc}
@@ -1182,15 +1287,13 @@ export default function Home() {
                 fill
                 priority
                 sizes="(max-width: 768px) 70vw, 48vw"
-                className={`object-contain object-right drop-shadow-[0_0_55px_rgba(56,189,248,0.45)] ${
-                  isNpcSpeaking ? "npc-talking-shake" : ""
-                }`}
+                className={`object-contain object-right drop-shadow-[0_0_55px_rgba(56,189,248,0.45)] ${isNpcSpeaking ? "npc-talking-shake" : ""
+                  }`}
               />
 
               <div
-                className={`pointer-events-none absolute left-[-48%] top-[10%] w-[min(420px,72vw)] rounded-2xl border border-cyan-300/40 bg-slate-950/80 px-4 py-3 text-left shadow-[0_0_30px_rgba(34,211,238,0.22)] backdrop-blur-sm transition-all duration-700 md:left-[-44%] ${
-                  showOpeningLine ? "translate-y-0 opacity-100" : "translate-y-4 opacity-0"
-                }`}
+                className={`pointer-events-none absolute left-[-48%] top-[10%] w-[min(420px,72vw)] rounded-2xl border border-cyan-300/40 bg-slate-950/80 px-4 py-3 text-left shadow-[0_0_30px_rgba(34,211,238,0.22)] backdrop-blur-sm transition-all duration-700 md:left-[-44%] ${showOpeningLine ? "translate-y-0 opacity-100" : "translate-y-4 opacity-0"
+                  }`}
               >
                 <div className="mb-2 flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-cyan-200/90">
                   <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-cyan-300" />
@@ -1222,49 +1325,43 @@ export default function Home() {
 
           {canTalk ? (
             <div
-              className={`absolute left-1/2 z-30 flex -translate-x-1/2 flex-col items-center gap-2 transition-all duration-500 ${
-                !hasMicPrimed ? "top-[53%] -translate-y-1/2" : "bottom-5 md:bottom-6"
-              }`}
+              className={`absolute left-1/2 z-30 flex -translate-x-1/2 flex-col items-center gap-2 transition-all duration-500 ${!hasMicPrimed ? "top-[53%] -translate-y-1/2" : "bottom-5 md:bottom-6"
+                }`}
             >
-            <button
-              type="button"
-              onClick={handleMicButtonClick}
-              disabled={
-                !hasStarted || !canTalk || exploded || won || busy || isNpcSpeaking || !recordingSupported
-              }
-              className={`inline-flex items-center gap-2 border font-semibold uppercase transition ${
-                canTalk && !hasMicPrimed
+              <button
+                type="button"
+                onClick={handleMicButtonClick}
+                disabled={
+                  !hasStarted || !canTalk || exploded || won || busy || isNpcSpeaking || !recordingSupported
+                }
+                className={`inline-flex items-center gap-2 border font-semibold uppercase transition ${canTalk && !hasMicPrimed
                   ? "rounded-xl border-2 px-8 py-4 text-base tracking-[0.22em] md:px-12 md:py-5 md:text-4xl"
                   : "rounded-md px-5 py-2 text-[11px] tracking-[0.2em] md:text-xs"
-              } ${
-                isRecording
-                  ? "border-rose-300/70 bg-rose-500/22 text-rose-100 shadow-[0_0_20px_rgba(244,63,94,0.45)]"
-                  : "border-emerald-200/55 bg-black/58 text-emerald-100 shadow-[0_0_18px_rgba(16,185,129,0.28)]"
-              } disabled:cursor-not-allowed disabled:opacity-45`}
-            >
-              <span
-                className={`inline-flex rounded-full ring-2 ${
-                  canTalk && !hasMicPrimed ? "h-4 w-4 md:h-6 md:w-6" : "h-2.5 w-2.5"
-                } ${
-                  isRecording
-                    ? "animate-pulse bg-rose-500 ring-rose-200/45"
-                    : "bg-emerald-400/70 ring-emerald-200/35"
-                }`}
-              />
-              {isRecording ? "Click to Send" : "Click to Record"}
-            </button>
+                  } ${isRecording
+                    ? "border-rose-300/70 bg-rose-500/22 text-rose-100 shadow-[0_0_20px_rgba(244,63,94,0.45)]"
+                    : "border-emerald-200/55 bg-black/58 text-emerald-100 shadow-[0_0_18px_rgba(16,185,129,0.28)]"
+                  } disabled:cursor-not-allowed disabled:opacity-45`}
+              >
+                <span
+                  className={`inline-flex rounded-full ring-2 ${canTalk && !hasMicPrimed ? "h-4 w-4 md:h-6 md:w-6" : "h-2.5 w-2.5"
+                    } ${isRecording
+                      ? "animate-pulse bg-rose-500 ring-rose-200/45"
+                      : "bg-emerald-400/70 ring-emerald-200/35"
+                    }`}
+                />
+                {isRecording ? "Click to Send" : "Click to Record"}
+              </button>
 
-            {isNpcSpeaking || busy || isRecording ? (
-              <p
-                className={`pointer-events-none rounded-sm bg-black/35 uppercase text-emerald-100/90 ${
-                  !hasMicPrimed
+              {isNpcSpeaking || busy || isRecording ? (
+                <p
+                  className={`pointer-events-none rounded-sm bg-black/35 uppercase text-emerald-100/90 ${!hasMicPrimed
                     ? "px-4 py-1 text-sm tracking-[0.22em] md:text-xl"
                     : "px-2 py-0.5 text-[10px] tracking-[0.16em]"
-                }`}
-              >
-                {isNpcSpeaking ? "Caller speaking..." : busy ? "Analyzing..." : "Recording live"}
-              </p>
-            ) : null}
+                    }`}
+                >
+                  {isNpcSpeaking ? "Caller speaking..." : busy ? "Analyzing..." : "Recording live"}
+                </p>
+              ) : null}
             </div>
           ) : null}
 

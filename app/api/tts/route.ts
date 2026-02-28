@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   synthesizeWithElevenLabs,
   synthesizeWithElevenLabsStream,
-  type ElevenLabsVoiceSettings
+  type ElevenLabsVoiceSettings,
+  DEFAULT_ELEVENLABS_VOICE_LEVEL_2
 } from "@/lib/elevenlabs";
 
 export const runtime = "nodejs";
@@ -60,8 +61,8 @@ function validateTtsInput(text: string, level: number) {
   if (!text) {
     return "Missing text.";
   }
-  if (level !== 1) {
-    // Voice mode is currently enabled only for Level 1 villain responses.
+  if (level !== 1 && level !== 2) {
+    // Voice mode is currently enabled only for Level 1 and Level 2
     return "TTS is disabled for this level.";
   }
   return null;
@@ -88,6 +89,7 @@ export async function GET(request: NextRequest) {
   try {
     const streamResult = await synthesizeWithElevenLabsStream({
       text,
+      voiceId: level === 2 ? DEFAULT_ELEVENLABS_VOICE_LEVEL_2 : undefined,
       voiceSettings: buildVillainVoiceSettings({
         suspicion: Number.isFinite(suspicion) ? suspicion : 50,
         mood
@@ -145,6 +147,7 @@ export async function POST(request: NextRequest) {
   try {
     const result = await synthesizeWithElevenLabs({
       text,
+      voiceId: level === 2 ? DEFAULT_ELEVENLABS_VOICE_LEVEL_2 : undefined,
       voiceSettings: buildVillainVoiceSettings({
         suspicion: Number.isFinite(suspicion) ? suspicion : 50,
         mood

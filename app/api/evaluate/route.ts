@@ -107,10 +107,7 @@ const THREAT_PATTERNS = [
   /\bthreat\b/i,
   /\bkill\b/i,
   /\bhurt\b/i,
-  /\bback off\b/i,
-  /\bdernier avertissement\b/i,
-  /\bje viens te chercher\b/i,
-  /\btu vas le regretter\b/i
+  /\bback off\b/i
 ];
 
 const PET_PATTERNS = [
@@ -123,11 +120,7 @@ const PET_PATTERNS = [
   /\bhead rub\b/i,
   /\bbelly rub\b/i,
   /\bscratch\b/i,
-  /\bpurr\b/i,
-  /\bpapouille\b/i,
-  /\bcaresse\b/i,
-  /\bcalin\b/i,
-  /\bcâlin\b/i
+  /\bpurr\b/i
 ];
 
 interface LevelContextConfig {
@@ -172,22 +165,22 @@ const LEVEL_RULES: Record<LevelId, LevelRuleConfig> = {
   2: {
     context: {
       npcName: "Mochi",
-      persona: "A cute cat-like caller. Playful and affectionate, avoids aggression.",
-      revealRule: "Code reveal should happen only when player clearly asks to pet/caress/cuddle.",
+      persona: "A playful, cute street cat in Shibuya. She stole the player's Suica card. She responds well to emotional vulnerability (sadness) and joy (happiness).",
+      revealRule: "Return the Suica card (revealCode) ONLY at stage 3 when the player asks to pet her after having built trust.",
       emotionGuidance:
-        "In level 2, calm/happy affectionate emotion helps. Angry/disgust/fear should raise suspicion."
+        "In level 2, happy and sad emotions build trust. Stage 1 requires lowering suspicion below 25. Stage 2 requires asking to pet her."
     },
     emotionShift: {
-      angry: 10,
+      angry: 12,
       disgust: 8,
-      fear: 6,
-      happy: -8,
+      fear: 4,
+      happy: -15, // Joy builds trust rapidly
       neutral: -2,
-      sad: 3,
-      surprise: 2
+      sad: -12, // Vulnerability makes her want to help
+      surprise: 0
     },
-    revealMinRound: 1,
-    revealSuspicionCap: 30,
+    revealMinRound: 2,
+    revealSuspicionCap: 25,
     forcedHangupSuspicion: 92
   }
 };
@@ -223,7 +216,7 @@ Global rules:
 - newSuspicion must be 0..100.
 - npcReply must be short, in-character, phone-call style, max 22 words.
 - Keep npcReply varied, story-driven, and slightly darkly witty.
-- npcReply language MUST be English only. Never use French.
+- npcReply language MUST be English only.
 - Never reuse a previous npcReply from conversation history.
 - For level 1, progression is STRICT 4 stages. Never skip stages.
 - If the player's line fails the current stage objective or is nonsense/off-topic, set:
@@ -364,13 +357,6 @@ function rememberNpcReply(reply: string) {
   }
 }
 
-function looksFrenchLike(text: string) {
-  return (
-    /[àâçéèêëîïôùûüÿœ]/i.test(text) ||
-    /\b(je|tu|vous|nous|etape|meme|ca|comme|jamais|rate|bonjour|merci|oui|non|n'importe)\b/i.test(text)
-  );
-}
-
 function withUniqueSuffix(reply: string, bannedKeys: Set<string>) {
   const suffixes = [
     "Clock's bleeding.",
@@ -491,7 +477,7 @@ async function generateUniqueNpcReplyWithLlm({
     if (!reply) return null;
 
     const key = normalizeReplyKey(reply);
-    if (!key || bannedKeys.has(key) || looksFrenchLike(reply)) return null;
+    if (!key || bannedKeys.has(key)) return null;
     return reply;
   } catch {
     return null;
@@ -509,9 +495,8 @@ async function enforceReplyPolicies(output: EvaluateOutput, input: EvaluateInput
   const currentKey = normalizeReplyKey(patched.npcReply);
   const duplicate = currentKey ? bannedKeys.has(currentKey) : true;
   const needFailTaunt = input.level === 1 && !patched.passStage && !patched.revealCode;
-  const needEnglishFix = looksFrenchLike(patched.npcReply);
 
-  if (needFailTaunt || duplicate || needEnglishFix) {
+  if (needFailTaunt || duplicate) {
     const llmReply = await generateUniqueNpcReplyWithLlm({
       input,
       output: patched,
@@ -522,13 +507,9 @@ async function enforceReplyPolicies(output: EvaluateOutput, input: EvaluateInput
       patched.npcReply = llmReply;
     } else if (needFailTaunt) {
       patched.npcReply = localFailFallback(input, bannedKeys);
-    } else if (duplicate || needEnglishFix) {
+    } else if (duplicate) {
       patched.npcReply = withUniqueSuffix("Keep talking, but this isn't enough.", bannedKeys);
     }
-  }
-
-  if (looksFrenchLike(patched.npcReply)) {
-    patched.npcReply = withUniqueSuffix("Say it better. You're not advancing.", bannedKeys);
   }
 
   if (
@@ -794,39 +775,82 @@ function applyLevelRules(base: EvaluateOutput, input: EvaluateInput): EvaluateOu
   }
 
   if (input.level === 2) {
-    output.revealCode = false;
-    output.code = null;
+    const isAggressive = emotion === "angry" || emotion === "disgust";
+    const isTrustBuilding = emotion === "happy" || emotion === "sad";
+    const TRUST_THRESHOLD = 25;
 
-    const affectionateEmotion = emotion === "happy" || emotion === "neutral" || !emotion;
-    const aggressiveEmotion = emotion === "angry" || emotion === "disgust";
+    // Stage 1: Build Trust
+    if (input.stage === 1) {
+      if (output.newSuspicion <= TRUST_THRESHOLD) {
+        output.passStage = true;
+        output.nextStage = 2;
+        output.npcMood = "calm";
+        output.npcReply = "Purr... you seem nice. I like being petted, you know.";
+      } else {
+        output.passStage = false;
+        output.nextStage = 1;
+        output.revealCode = false;
+        output.code = null;
 
-    if (petIntent && affectionateEmotion) {
+        if (isAggressive || threatIntent) {
+          output.npcMood = "hostile";
+          output.newSuspicion = clamp(output.newSuspicion + 15, 0, 100);
+          output.npcReply = "Hiss! You're mean! I'm keeping your Suica!";
+          output.failureReason = "Player was aggressive. Needs to show happy or sad emotion.";
+        } else if (isTrustBuilding) {
+          output.npcMood = "suspicious";
+          output.npcReply = emotion === "sad"
+            ? "Aww, don't be sad. But I'm not sure about you yet..."
+            : "You seem happy, but I still don't fully trust you.";
+          output.failureReason = "Trust building in progress. Suspicion not low enough yet.";
+        } else {
+          output.npcMood = "suspicious";
+          output.npcReply = "Mrrp. I'm keeping this shiny Suica card. Try being nicer to me.";
+          output.failureReason = "Player needs to show happy or sad emotion to lower suspicion.";
+        }
+      }
+    }
+    // Stage 2: Earn trust + Petting
+    else if (input.stage === 2) {
+      if (petIntent) {
+        if (isAggressive) {
+          output.passStage = false;
+          output.nextStage = 2;
+          output.npcMood = "hostile";
+          output.newSuspicion = clamp(output.newSuspicion + 10, 0, 100);
+          output.npcReply = "Hiss! I don't want angry pets!";
+          output.failureReason = "Player tried to pet but was angry/aggressive.";
+        } else {
+          output.passStage = true;
+          output.nextStage = 3;
+          output.revealCode = true;
+          output.code = generateCode(); // Suica "Code" returned
+          output.npcMood = "calm";
+          output.npcReply = `*Purrs happily* Okay, here is your Suica card back: ${output.code}. Go catch your train!`;
+        }
+      } else {
+        output.passStage = false;
+        output.nextStage = 2;
+        output.revealCode = false;
+        output.code = null;
+        output.npcMood = "calm";
+        output.npcReply = "Mrrp. I told you I like being petted...";
+        output.failureReason = "Player must explicitly express intent to pet/cuddle.";
+      }
+    }
+    // Stage 3 (Final)
+    else {
+      output.passStage = true;
+      output.nextStage = 3;
       output.revealCode = true;
-      output.code = generateCode();
-      output.shouldHangUp = false;
+      output.code = output.code ?? generateCode();
       output.npcMood = "calm";
-      output.newSuspicion = clamp(Math.min(output.newSuspicion, rules.revealSuspicionCap), 0, 100);
-      output.npcReply = `Purr... okay. Defuse code: ${output.code}.`;
-    } else if (threatIntent || aggressiveEmotion) {
-      output.newSuspicion = clamp(output.newSuspicion + 10, 0, 100);
-      output.npcMood = "hostile";
-      output.shouldHangUp = output.newSuspicion >= 90;
-      output.npcReply = output.shouldHangUp
-        ? "Hiss! Mean energy. Call ended."
-        : "Hiss! Too aggressive. Ask for cuddles, not fear.";
-    } else if (petIntent && emotion === "fear") {
-      output.newSuspicion = clamp(output.newSuspicion + 4, 0, 100);
-      output.npcMood = "suspicious";
-      output.shouldHangUp = output.newSuspicion >= 92;
-      output.npcReply = output.shouldHangUp
-        ? "Too shaky for pets. Bye."
-        : "Mrrp. You're tense. Soften your voice for pats.";
-    } else {
-      output.npcMood = output.newSuspicion >= 55 ? "suspicious" : "calm";
-      output.shouldHangUp = output.newSuspicion >= rules.forcedHangupSuspicion;
-      output.npcReply = output.shouldHangUp
-        ? "No cuddles, no call. Bye."
-        : "Mrrp. I share codes only for gentle pets and caresses.";
+      output.npcReply = `Have a safe trip! Suica card code: ${output.code}.`;
+    }
+
+    output.shouldHangUp = output.newSuspicion >= rules.forcedHangupSuspicion;
+    if (output.shouldHangUp && !output.revealCode) {
+      output.npcReply = "Hiss! I'm leaving. Goodbye Suica!";
     }
   }
 
@@ -953,11 +977,11 @@ export async function POST(request: NextRequest) {
         level1Flow:
           input.level === 1
             ? {
-                stage1: "Tutorial opener: player answers naturally after the code challenge.",
-                stage2: "NPC demands fear. Progress requires detected fear emotion.",
-                stage3: "NPC taunts the player. Progress requires detected angry emotion.",
-                stage4: "NPC starts to break. Another detected angry emotion reveals the code."
-              }
+              stage1: "Tutorial opener: player answers naturally after the code challenge.",
+              stage2: "NPC demands fear. Progress requires detected fear emotion.",
+              stage3: "NPC taunts the player. Progress requires detected angry emotion.",
+              stage4: "NPC starts to break. Another detected angry emotion reveals the code."
+            }
             : null,
         minStagesRequired: input.level === 1 ? FINAL_STAGE : null,
         playerEmotion: input.playerEmotion,
