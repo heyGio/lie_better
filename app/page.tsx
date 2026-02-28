@@ -56,7 +56,7 @@ interface EvaluateResponse {
 
 const START_TIME = 120;
 const START_SUSPICION = 50;
-const OPENING_LINE = "Who is this? You have 2 minutes. Talk.";
+const OPENING_LINE = "I planted a bomb at your hackathon. You have 2 minutes. Convince me.";
 const DARKEN_DELAY_MS = 180;
 const OPENING_LINE_DELAY_MS = 980;
 const TALK_READY_DELAY_MS = 1720;
@@ -167,7 +167,7 @@ function inferEmotionFromTranscript(transcript: string): {
   return { emotion: null, score: null, scores: null };
 }
 
-function shouldIgnoreSpaceHotkey(target: EventTarget | null) {
+function shouldIgnoreHotkey(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false;
   if (target.isContentEditable) return true;
 
@@ -879,7 +879,7 @@ export default function Home() {
 
     const onEnterDown = (event: KeyboardEvent) => {
       if (event.code !== "Enter") return;
-      if (shouldIgnoreSpaceHotkey(event.target)) return;
+      if (shouldIgnoreHotkey(event.target)) return;
       event.preventDefault();
       void startGameSequence();
     };
@@ -896,7 +896,7 @@ export default function Home() {
 
     const onEnterRetry = (event: KeyboardEvent) => {
       if (event.code !== "Enter") return;
-      if (shouldIgnoreSpaceHotkey(event.target)) return;
+      if (shouldIgnoreHotkey(event.target)) return;
       event.preventDefault();
       handleRetry();
     };

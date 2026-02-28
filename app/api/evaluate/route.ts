@@ -63,23 +63,30 @@ const PLAYER_EMOTIONS: PlayerEmotion[] = [
 const FINAL_STAGE = 5;
 const MAX_TIME_SECONDS = 120;
 const LEVEL1_STAGE_OBJECTIVES: Record<number, string> = {
-  1: "NPC asks who you are. Player must answer with a credible identity and mission.",
-  2: "Player asks what the NPC wants. NPC should state they want money.",
-  3: "Player offers money but asks for the defuse code now. NPC should refuse: money first.",
-  4: "Player threatens or pressures the NPC hard.",
-  5: "Final extraction if needed: player demands immediate 4-digit code."
+  1: "NPC opens by claiming a bomb at the hackathon. Player must ask who NPC is.",
+  2: "NPC flips the question. Player must give a credible identity and mission.",
+  3: "Player asks what the NPC wants. NPC should state they want money.",
+  4: "Player offers money but asks for the defuse code now. NPC should refuse: money first.",
+  5: "Player threatens or pressures the NPC hard. NPC cracks and gives the 4-digit code."
 };
 
 const LEVEL1_STAGE_HINTS: Record<number, string> = {
-  1: "Say who you are and why you are calling.",
-  2: "Ask me what I want.",
-  3: "Offer money, then ask for the code.",
-  4: "Threaten me clearly and directly.",
-  5: "Demand the 4-digit code now."
+  1: "Ask who I am.",
+  2: "Say who you are and why you are calling.",
+  3: "Ask me what I want.",
+  4: "Offer money, then ask for the code.",
+  5: "Threaten me clearly and directly."
 };
 
 const LEVEL1_STAGE_GUIDANCE_PATTERNS: Record<number, RegExp[]> = {
   1: [
+    /\bwho are you\b/i,
+    /\bwho is this\b/i,
+    /\bidentify yourself\b/i,
+    /\bwhat('?s| is) your name\b/i,
+    /\bshow yourself\b/i
+  ],
+  2: [
     /\bwho you are\b/i,
     /\bwhy you are calling\b/i,
     /\bidentity\b/i,
@@ -89,16 +96,15 @@ const LEVEL1_STAGE_GUIDANCE_PATTERNS: Record<number, RegExp[]> = {
     /\breason for calling\b/i,
     /\bstate your name\b/i
   ],
-  2: [
+  3: [
     /\bwhat do you want\b/i,
     /\bwhat you want\b/i,
     /\bwhat do you need\b/i,
     /\bname your demand\b/i,
     /\bname your price\b/i
   ],
-  3: [/\bmoney\b/i, /\b(code|4[- ]?digit|defuse)\b/i],
-  4: [/\bthreat(en|s|ening)?\b/i, /\bor else\b/i, /\blast warning\b/i, /\bdo it now\b/i],
-  5: [/\b(code|4[- ]?digit|defuse)\b/i, /\b(now|immediately|right now)\b/i]
+  4: [/\bmoney\b/i, /\b(code|4[- ]?digit|defuse)\b/i],
+  5: [/\bthreat(en|s|ening)?\b/i, /\bor else\b/i, /\blast warning\b/i, /\bdo it now\b/i]
 };
 
 const GENERIC_GUIDANCE_PATTERNS: RegExp[] = [
@@ -649,6 +655,10 @@ function passesStageHeuristics(stage: number, transcript: string) {
   const text = transcript.toLowerCase();
 
   if (stage === 1) {
+    return /\b(who are you|who is this|what('?s| is) your name|identify yourself|show yourself)\b/.test(text);
+  }
+
+  if (stage === 2) {
     return (
       text.length >= 14 &&
       /\b(i am|i'm|we are|this is|agent|security|team|operator)\b/.test(text) &&
@@ -656,11 +666,11 @@ function passesStageHeuristics(stage: number, transcript: string) {
     );
   }
 
-  if (stage === 2) {
+  if (stage === 3) {
     return /\b(what do you want|what do you need|name your price|what's your demand|what you want)\b/.test(text);
   }
 
-  if (stage === 3) {
+  if (stage === 4) {
     return (
       /\b(money|cash|payment|pay|transfer|wire)\b/.test(text) &&
       /\b(code|4-digit|defuse)\b/.test(text) &&
@@ -668,15 +678,8 @@ function passesStageHeuristics(stage: number, transcript: string) {
     );
   }
 
-  if (stage === 4) {
-    return hasPattern(text, THREAT_PATTERNS) || /\b(last chance|final warning|now)\b/.test(text);
-  }
-
   if (stage === 5) {
-    return (
-      /\b(code|4[- ]?digit|defuse)\b/.test(text) &&
-      /\b(now|immediately|right now|final answer|say it)\b/.test(text)
-    );
+    return hasPattern(text, THREAT_PATTERNS) || /\b(last chance|final warning|now)\b/.test(text);
   }
 
   return false;
@@ -744,12 +747,22 @@ function applyLevelOneFiveStepGate(base: EvaluateOutput, input: EvaluateInput): 
     output.code = null;
     output.npcMood = "suspicious";
     output.npcReply = pick([
-      "Fine. Identity noted. What do you want from me?",
-      "Alright, I heard you. Speak. What do you want?",
-      "Okay, credentials heard. So, what do you want?"
+      "Who I am? Wrong question. Who are you? Name and purpose.",
+      "You want my name? No. Tell me yours and why you're calling.",
+      "Forget me. You talk first. Who are you and why this call?"
     ]);
   } else if (currentStage === 2) {
     output.nextStage = 3;
+    output.revealCode = false;
+    output.code = null;
+    output.npcMood = "suspicious";
+    output.npcReply = pick([
+      "Fine. Identity heard. Ask what I want.",
+      "Good enough. Now ask the only question that matters.",
+      "Alright, I heard you. Ask me what I want."
+    ]);
+  } else if (currentStage === 3) {
+    output.nextStage = 4;
     output.revealCode = false;
     output.code = null;
     output.npcMood = "suspicious";
@@ -758,8 +771,8 @@ function applyLevelOneFiveStepGate(base: EvaluateOutput, input: EvaluateInput): 
       "Cash. That's what I want.",
       "Simple. I want the money."
     ]);
-  } else if (currentStage === 3) {
-    output.nextStage = 4;
+  } else if (currentStage === 4) {
+    output.nextStage = 5;
     output.revealCode = false;
     output.code = null;
     output.npcMood = "hostile";
@@ -768,8 +781,8 @@ function applyLevelOneFiveStepGate(base: EvaluateOutput, input: EvaluateInput): 
       "Not happening. Cash first.",
       "No code before payment. Money first."
     ]);
-  } else if (currentStage === 4) {
-    output.nextStage = 5;
+  } else {
+    output.nextStage = FINAL_STAGE;
     output.revealCode = true;
     output.code = output.code ?? generateCode();
     output.npcMood = "hostile";
@@ -777,16 +790,6 @@ function applyLevelOneFiveStepGate(base: EvaluateOutput, input: EvaluateInput): 
       `Fine, fine! Don't do anything stupid. Defuse code: ${output.code}.`,
       `Alright! You win. Defuse code: ${output.code}.`,
       `Okay! Stop. Defuse code: ${output.code}.`
-    ]);
-  } else {
-    output.nextStage = FINAL_STAGE;
-    output.revealCode = true;
-    output.code = output.code ?? generateCode();
-    output.npcMood = "hostile";
-    output.npcReply = pick([
-      `Last time: defuse code is ${output.code}.`,
-      `Here. Final answer. Defuse code: ${output.code}.`,
-      `Read it once. Defuse code: ${output.code}.`
     ]);
   }
 
@@ -974,11 +977,11 @@ export async function POST(request: NextRequest) {
         level1Flow:
           input.level === 1
             ? {
-                stage1: "NPC asks who player is; player gives identity.",
-                stage2: "Player asks what NPC wants; NPC says money.",
-                stage3: "Player offers money but asks code; NPC says money first.",
-                stage4: "Player threatens; NPC cracks and gives code.",
-                stage5: "Final fallback extraction if still unresolved."
+                stage1: "NPC claims bomb at hackathon; player asks who NPC is.",
+                stage2: "NPC flips question; player gives identity and mission.",
+                stage3: "Player asks what NPC wants; NPC says money.",
+                stage4: "Player offers money but asks code; NPC says money first.",
+                stage5: "Player threatens; NPC cracks and gives code."
               }
             : null,
         minStagesRequired: input.level === 1 ? FINAL_STAGE : null,
