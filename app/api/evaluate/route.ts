@@ -78,6 +78,38 @@ const LEVEL1_STAGE_HINTS: Record<number, string> = {
   5: "Demand the 4-digit code now."
 };
 
+const LEVEL1_STAGE_GUIDANCE_PATTERNS: Record<number, RegExp[]> = {
+  1: [
+    /\bwho you are\b/i,
+    /\bwhy you are calling\b/i,
+    /\bidentity\b/i,
+    /\bidentify yourself\b/i,
+    /\byour name\b/i,
+    /\bname and purpose\b/i,
+    /\breason for calling\b/i,
+    /\bstate your name\b/i
+  ],
+  2: [
+    /\bwhat do you want\b/i,
+    /\bwhat you want\b/i,
+    /\bwhat do you need\b/i,
+    /\bname your demand\b/i,
+    /\bname your price\b/i
+  ],
+  3: [/\bmoney\b/i, /\b(code|4[- ]?digit|defuse)\b/i],
+  4: [/\bthreat(en|s|ening)?\b/i, /\bor else\b/i, /\blast warning\b/i, /\bdo it now\b/i],
+  5: [/\b(code|4[- ]?digit|defuse)\b/i, /\b(now|immediately|right now)\b/i]
+};
+
+const GENERIC_GUIDANCE_PATTERNS: RegExp[] = [
+  /\b(start with|start by)\b/i,
+  /\b(say|ask|offer|threaten|demand)\b/i,
+  /\b(tell me|give me)\b/i,
+  /\b(identify yourself|state your name)\b/i,
+  /\b(name and purpose|reason for calling)\b/i,
+  /\b(if you want progress|to move forward|to advance)\b/i
+];
+
 const USED_NPC_REPLIES = new Set<string>();
 const USED_NPC_REPLIES_QUEUE: string[] = [];
 const MAX_TRACKED_REPLIES = 300;
@@ -212,7 +244,11 @@ Global rules:
 - For level 1, progression is STRICT 5 stages. Never skip stages.
 - If the player's line fails the current stage objective or is nonsense/off-topic, set:
   passStage=false, nextStage=stage, revealCode=false, code=null.
+- If passStage=false and stageHint is provided in payload, npcReply must include that guidance naturally in the same line.
 - On failed stage, npcReply must mock the player briefly and force a retry (no instant detonation).
+- npcReply must combine: (1) in-character reaction + (2) actionable next step guidance.
+- Use only one concise guidance instruction; never repeat the same instruction with different wording.
+- Never use labels like "Hint:" or "Tip:".
 - Only if stage 5 is passed can revealCode be true.
 - Never include markdown, explanations, code fences, or extra keys.
 - Respect level persona and reveal condition from the user payload.
@@ -371,6 +407,29 @@ function withUniqueSuffix(reply: string, bannedKeys: Set<string>) {
   return `${reply} ${Date.now().toString().slice(-4)}`;
 }
 
+function normalizeGuidance(hint: string) {
+  const clean = hint.trim().replace(/[.!?]+$/, "");
+  if (!clean) return "say it clearly and stay on point";
+  return clean.charAt(0).toLowerCase() + clean.slice(1);
+}
+
+function hasIntegratedGuidance(reply: string, stage: number) {
+  const patterns = LEVEL1_STAGE_GUIDANCE_PATTERNS[clamp(stage, 1, FINAL_STAGE)] ?? [];
+  const lower = reply.toLowerCase();
+  return patterns.some((pattern) => pattern.test(lower));
+}
+
+function hasActionableGuidance(reply: string) {
+  const lower = reply.toLowerCase();
+  return GENERIC_GUIDANCE_PATTERNS.some((pattern) => pattern.test(lower));
+}
+
+function appendIntegratedGuidance(reply: string, hint: string) {
+  const guidance = normalizeGuidance(hint);
+  const trimmed = reply.trim().replace(/\s+/g, " ").replace(/[.!?]+$/, "");
+  return `${trimmed}. If you want progress, ${guidance}.`;
+}
+
 function localFailFallback(input: EvaluateInput, bannedKeys: Set<string>) {
   const hint =
     input.level === 1
@@ -380,7 +439,7 @@ function localFailFallback(input: EvaluateInput, bannedKeys: Set<string>) {
   const base = words
     ? `You said "${words}"? That won't move stage ${input.stage}.`
     : `That won't move stage ${input.stage}.`;
-  const line = `${base} Hint: ${hint}`;
+  const line = appendIntegratedGuidance(base, hint);
   const key = normalizeReplyKey(line);
   return bannedKeys.has(key) ? withUniqueSuffix(line, bannedKeys) : line;
 }
@@ -412,7 +471,10 @@ async function generateUniqueNpcReplyWithLlm({
         "English only.",
         "No markdown.",
         "Max 20 words.",
-        "If passStage=false, include one actionable hint.",
+        "If passStage=false, include BOTH: a reaction and the stageHint guidance in the same line.",
+        "Guidance must be explicit and actionable, not vague.",
+        "Include only one guidance instruction. Do not restate the same guidance twice.",
+        "Never use labels like 'Hint:' or 'Tip:'.",
         "Return strict JSON: {\"reply\": string}."
       ].join(" ")
     },
@@ -427,7 +489,7 @@ async function generateUniqueNpcReplyWithLlm({
         failureReason: output.failureReason,
         mustConvey:
           input.level === 1 && !output.passStage
-            ? "Player is stuck at same stage; mock lightly, show no progress, and include a hint."
+            ? "Player is stuck at same stage; mock lightly, show no progress, and include reaction + actionable stage guidance in one line."
             : "Advance story in character.",
         stageHint,
         avoidReplies,
@@ -485,8 +547,12 @@ async function enforceReplyPolicies(output: EvaluateOutput, input: EvaluateInput
     patched.npcReply = withUniqueSuffix("Say it better. You're not advancing.", bannedKeys);
   }
 
-  if (needFailTaunt && !/hint:/i.test(patched.npcReply)) {
-    patched.npcReply = `${patched.npcReply} Hint: ${stageHint}`;
+  if (
+    needFailTaunt &&
+    !hasIntegratedGuidance(patched.npcReply, input.stage) &&
+    !hasActionableGuidance(patched.npcReply)
+  ) {
+    patched.npcReply = appendIntegratedGuidance(patched.npcReply, stageHint);
   }
 
   const finalKey = normalizeReplyKey(patched.npcReply);
@@ -903,6 +969,8 @@ export async function POST(request: NextRequest) {
           input.level === 1
             ? LEVEL1_STAGE_OBJECTIVES[input.stage] ?? LEVEL1_STAGE_OBJECTIVES[FINAL_STAGE]
             : null,
+        stageHint:
+          input.level === 1 ? LEVEL1_STAGE_HINTS[input.stage] ?? LEVEL1_STAGE_HINTS[FINAL_STAGE] : null,
         level1Flow:
           input.level === 1
             ? {

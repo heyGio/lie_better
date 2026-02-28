@@ -504,6 +504,37 @@ body {
   animation: explode-shake 180ms linear 6;
 }
 
+.npc-talking-shake {
+  transform-origin: 55% 78%;
+  animation: npc-talking-shake 140ms steps(2, end) infinite;
+}
+
+@keyframes npc-talking-shake {
+  0% {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+  }
+
+  20% {
+    transform: translate3d(-1.6px, 0.9px, 0) rotate(-0.35deg);
+  }
+
+  40% {
+    transform: translate3d(1.5px, -1px, 0) rotate(0.3deg);
+  }
+
+  60% {
+    transform: translate3d(-1.2px, -0.6px, 0) rotate(-0.22deg);
+  }
+
+  80% {
+    transform: translate3d(1.1px, 0.8px, 0) rotate(0.2deg);
+  }
+
+  100% {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+  }
+}
+
 @keyframes explode-shake {
   0% {
     transform: translate3d(0, 0, 0);

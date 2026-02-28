@@ -63,6 +63,7 @@ const TALK_READY_DELAY_MS = 1720;
 const BOMB_TIMER_APPEAR_DELAY_MS = 2000;
 const INTRO_TITLE = "Lie Better";
 const INTRO_PROMPT = "press enter....";
+const CALLER_NAME = "Unknown Caller";
 
 const PLAYER_EMOTIONS: PlayerEmotion[] = [
   "angry",
@@ -174,10 +175,6 @@ function shouldIgnoreSpaceHotkey(target: EventTarget | null) {
   return tag === "input" || tag === "textarea" || tag === "select" || tag === "button";
 }
 
-function isSpaceKey(event: KeyboardEvent) {
-  return event.code === "Space" || event.key === " " || event.key === "Spacebar";
-}
-
 export default function Home() {
   const [hasStarted, setHasStarted] = useState(false);
   const [showCharacter, setShowCharacter] = useState(false);
@@ -225,7 +222,6 @@ export default function Home() {
   const audioChunksRef = useRef<Blob[]>([]);
   const discardRecordingRef = useRef(false);
   const recordingSessionRef = useRef(0);
-  const spacePttActiveRef = useRef(false);
   const audioUnlockedRef = useRef(false);
 
   const darkenTimeoutRef = useRef<number | null>(null);
@@ -360,7 +356,7 @@ export default function Home() {
           npcAudioRef.current = null;
         }
         setIsNpcSpeaking(false);
-        setStatusLine("Browser blocked caller audio. Press Space and retry.");
+        setStatusLine("Browser blocked caller audio. Continue the call.");
         console.error("🚨  [TTS] Browser blocked or failed audio playback", error);
       }
     },
@@ -534,7 +530,7 @@ export default function Home() {
           setStatusLine("Caller mocks you. Keep trying before the timer hits zero.");
         } else {
           const nextStage = typeof data.nextStage === "number" ? clamp(Math.round(data.nextStage), 1, 5) : stage;
-          setStatusLine(`Stage ${nextStage}/5. Hold Space when ready.`);
+          setStatusLine(`Stage ${nextStage}/5.`);
         }
 
         void speakNpcLine(data.npcReply, data.npcMood, data.newSuspicion);
@@ -545,7 +541,7 @@ export default function Home() {
         }
       } catch (error) {
         console.error("🚨  [Turn] Evaluation error", error);
-        setStatusLine("Connection glitch. Hold Space and retry.");
+        setStatusLine("Connection glitch. Retry voice input.");
       } finally {
         setLoading(false);
       }
@@ -553,7 +549,7 @@ export default function Home() {
     [exploded, replaceHistory, speakNpcLine, stage, suspicion, timeRemaining, timerRunning, won]
   );
 
-  const handlePressStart = useCallback(async () => {
+  const startAutoRecording = useCallback(async () => {
     void unlockAudioPlayback();
     if (!hasStarted || !canTalk || busy || isRecording || timeRemaining <= 0 || exploded || won) return;
     if (isNpcSpeaking) {
@@ -620,7 +616,7 @@ export default function Home() {
         audioChunksRef.current = [];
 
         if (audioBlob.size < 150) {
-          setMicError("Audio too short. Hold Space while speaking.");
+          setMicError("Audio too short. Keep speaking a bit longer.");
           return;
         }
 
@@ -666,7 +662,7 @@ export default function Home() {
         } catch (error) {
           console.error("🚨  [Audio] Transcription error", error);
           setMicError("Could not transcribe audio. Try again.");
-          setStatusLine("Mic/transcription issue. Hold Space to retry.");
+          setStatusLine("Mic/transcription issue. Retry speaking.");
         } finally {
           if (recordingSessionRef.current === sessionId) {
             setIsTranscribing(false);
@@ -676,8 +672,8 @@ export default function Home() {
 
       recorder.start();
       setIsRecording(true);
-      setStatusLine("Recording... release Space to send.");
-      console.info("🎙️  [Audio] Recording started");
+      setStatusLine("Recording... click again to send.");
+      console.info("🎙️  [Audio] Recording started from mic button");
     } catch (error) {
       console.error("🚨  [Audio] Unable to start recording", error);
       setMicError("Microphone access denied or unavailable.");
@@ -699,7 +695,7 @@ export default function Home() {
     won
   ]);
 
-  const handlePressEnd = useCallback(() => {
+  const sendCurrentRecording = useCallback(() => {
     if (!isRecording) return;
     stopRecording(false);
     setStatusLine("Processing your message...");
@@ -832,8 +828,8 @@ export default function Home() {
 
     talkReadyTimeoutRef.current = window.setTimeout(() => {
       setCanTalk(true);
-      setStatusLine("Hold Space to respond");
-      console.info("⌨️  [Intro] Space hold-to-talk enabled");
+      setStatusLine("Your turn. Click the mic button to record.");
+      console.info("🎙️  [Intro] Click-to-record mode enabled");
     }, TALK_READY_DELAY_MS);
   }, [
     clearIntroSequenceTimers,
@@ -912,57 +908,32 @@ export default function Home() {
     };
   }, [exploded, handleRetry]);
 
-  useEffect(() => {
-    if (!hasStarted || !canTalk || exploded || won) return;
+  const handleMicButtonClick = useCallback(() => {
+    if (!hasStarted || !canTalk || exploded || won || timeRemaining <= 0) return;
+    if (busy) return;
+    if (isNpcSpeaking) {
+      setStatusLine("Wait for caller to finish.");
+      return;
+    }
 
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!isSpaceKey(event)) return;
-      event.preventDefault();
+    if (isRecording) {
+      sendCurrentRecording();
+      return;
+    }
 
-      // Fallback for environments where keyup is swallowed (e.g. remote desktop):
-      // a new non-repeated space press while recording force-stops recording.
-      if (!event.repeat && spacePttActiveRef.current && isRecording) {
-        spacePttActiveRef.current = false;
-        handlePressEnd();
-        return;
-      }
-
-      if (event.repeat || spacePttActiveRef.current) return;
-
-      spacePttActiveRef.current = true;
-      void handlePressStart();
-    };
-
-    const onKeyUp = (event: KeyboardEvent) => {
-      if (!isSpaceKey(event)) return;
-      if (!spacePttActiveRef.current) return;
-
-      event.preventDefault();
-      spacePttActiveRef.current = false;
-      handlePressEnd();
-    };
-
-    const onBlur = () => {
-      if (!spacePttActiveRef.current) return;
-      spacePttActiveRef.current = false;
-      handlePressEnd();
-    };
-
-    window.addEventListener("keydown", onKeyDown, true);
-    window.addEventListener("keyup", onKeyUp, true);
-    document.addEventListener("keydown", onKeyDown, true);
-    document.addEventListener("keyup", onKeyUp, true);
-    window.addEventListener("blur", onBlur);
-
-    return () => {
-      window.removeEventListener("keydown", onKeyDown, true);
-      window.removeEventListener("keyup", onKeyUp, true);
-      document.removeEventListener("keydown", onKeyDown, true);
-      document.removeEventListener("keyup", onKeyUp, true);
-      window.removeEventListener("blur", onBlur);
-      spacePttActiveRef.current = false;
-    };
-  }, [canTalk, exploded, handlePressEnd, handlePressStart, hasStarted, isRecording, won]);
+    void startAutoRecording();
+  }, [
+    busy,
+    canTalk,
+    exploded,
+    hasStarted,
+    isNpcSpeaking,
+    isRecording,
+    sendCurrentRecording,
+    startAutoRecording,
+    timeRemaining,
+    won
+  ]);
 
   useEffect(() => {
     if (!timerRunning || exploded || won) return;
@@ -1051,6 +1022,10 @@ export default function Home() {
 
   return (
     <main className={`relative h-screen w-screen overflow-hidden select-none ${isSceneShaking ? "explode-shake" : ""}`}>
+      <p className="sr-only" aria-live="polite">
+        {statusLine}
+      </p>
+
       <div
         className={`pointer-events-none absolute inset-0 bg-black transition-opacity duration-[1400ms] ease-out ${
           hasStarted && !destroyedBackgroundVisible ? "opacity-60" : "opacity-0"
@@ -1121,9 +1096,30 @@ export default function Home() {
             </div>
           ) : null}
 
-          <div className="pointer-events-none absolute left-4 top-4 rounded-lg border border-cyan-300/35 bg-slate-950/55 px-4 py-2 font-mono text-xl font-bold text-cyan-200 md:left-8 md:top-8 md:text-3xl">
-            Suspicion {suspicion} • {npcMood} • Stage {stage}/5
-            <p className="mt-1 text-[10px] font-medium uppercase tracking-[0.14em] text-cyan-100/80 md:text-xs">{statusLine}</p>
+          <div className="pointer-events-none absolute right-4 top-4 rounded-lg border border-cyan-300/45 bg-slate-950/70 px-3 py-2 font-mono text-sm font-black uppercase tracking-[0.16em] text-cyan-100 md:right-8 md:top-8 md:text-base">
+            Stage {stage}/5
+          </div>
+
+          <div className="pointer-events-none absolute left-4 top-4 w-[min(420px,68vw)] rounded-xl border border-cyan-300/35 bg-slate-950/60 px-4 py-3 font-mono text-cyan-100 shadow-[0_0_22px_rgba(34,211,238,0.18)] backdrop-blur-sm md:left-8 md:top-8">
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-cyan-200/95 md:text-xs">
+                {CALLER_NAME} is {npcMood}
+              </p>
+            </div>
+            <div className="mt-2 flex items-center justify-between text-base font-black tracking-[0.08em] md:text-2xl">
+              <span>Suspicious Level</span>
+              <span>{suspicion}</span>
+            </div>
+            <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-slate-900/80 ring-1 ring-cyan-300/25 md:h-3">
+              <div
+                className="h-full rounded-full transition-all duration-500"
+                style={{
+                  width: `${suspicion}%`,
+                  backgroundColor: `hsl(${Math.round((100 - suspicion) * 1.2)}, 88%, 56%)`,
+                  boxShadow: `0 0 12px hsla(${Math.round((100 - suspicion) * 1.2)}, 95%, 55%, 0.42)`
+                }}
+              />
+            </div>
           </div>
 
           <div className="absolute left-3 top-[58%] z-20 w-[32vw] max-w-[520px] min-w-[230px] -translate-y-1/2 px-1 md:left-7 md:w-[29vw] md:px-0">
@@ -1151,7 +1147,7 @@ export default function Home() {
                 </span>
               </div>
 
-              <div className="absolute left-[38.35%] top-[62.45%] h-[10.9%] w-[14.9%]">
+              <div className="absolute left-[37.95%] top-[61.9%] h-[10.9%] w-[14.9%]">
                 <input
                   value={playerCodeInput}
                   onChange={(event) => {
@@ -1188,7 +1184,9 @@ export default function Home() {
                 fill
                 priority
                 sizes="(max-width: 768px) 70vw, 48vw"
-                className="object-contain object-right drop-shadow-[0_0_55px_rgba(56,189,248,0.45)]"
+                className={`object-contain object-right drop-shadow-[0_0_55px_rgba(56,189,248,0.45)] ${
+                  isNpcSpeaking ? "npc-talking-shake" : ""
+                }`}
               />
 
               <div
@@ -1198,23 +1196,9 @@ export default function Home() {
               >
                 <div className="mb-2 flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-cyan-200/90">
                   <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-cyan-300" />
-                  Unknown Caller
+                  {CALLER_NAME}
                 </div>
                 <p className="text-sm text-slate-100 md:text-base">{latestNpcLine}</p>
-              </div>
-
-              <div
-                className={`pointer-events-none absolute bottom-[2%] left-[-40%] rounded-lg border border-emerald-300/35 bg-emerald-500/10 px-3 py-2 text-xs uppercase tracking-[0.12em] text-emerald-200 transition-all duration-700 md:bottom-[3%] ${
-                  canTalk ? "opacity-100" : "opacity-0"
-                }`}
-              >
-                {isNpcSpeaking
-                  ? "Caller speaking..."
-                  : isRecording
-                    ? "Recording... release Space"
-                    : busy
-                      ? "Analyzing..."
-                      : "Hold Space to Talk"}
               </div>
 
               {lastTranscript ? (
@@ -1235,6 +1219,40 @@ export default function Home() {
                 </div>
               ) : null}
             </div>
+          </div>
+
+          <div className="absolute bottom-5 left-1/2 z-30 flex -translate-x-1/2 flex-col items-center gap-2 md:bottom-6">
+            <button
+              type="button"
+              onClick={handleMicButtonClick}
+              disabled={
+                !hasStarted || !canTalk || exploded || won || busy || isNpcSpeaking || !recordingSupported
+              }
+              className={`inline-flex items-center gap-2 rounded-md border px-5 py-2 text-[11px] font-semibold uppercase tracking-[0.2em] transition md:text-xs ${
+                isRecording
+                  ? "border-rose-300/70 bg-rose-500/22 text-rose-100 shadow-[0_0_20px_rgba(244,63,94,0.45)]"
+                  : "border-emerald-200/55 bg-black/58 text-emerald-100 shadow-[0_0_18px_rgba(16,185,129,0.28)]"
+              } disabled:cursor-not-allowed disabled:opacity-45`}
+            >
+              <span
+                className={`inline-flex h-2.5 w-2.5 rounded-full ring-2 ${
+                  isRecording
+                    ? "animate-pulse bg-rose-500 ring-rose-200/45"
+                    : "bg-emerald-400/70 ring-emerald-200/35"
+                }`}
+              />
+              {isRecording ? "Click to Send" : "Click to Record"}
+            </button>
+
+            <p className="pointer-events-none rounded-sm bg-black/35 px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-emerald-100/90">
+              {isNpcSpeaking
+                ? "Caller speaking..."
+                : busy
+                  ? "Analyzing..."
+                  : isRecording
+                    ? "Recording live"
+                    : "Click the button to start"}
+            </p>
           </div>
 
           {micError ? (
