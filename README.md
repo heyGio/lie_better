@@ -8,7 +8,7 @@ Team: **Golden gAI**
 
 - Next.js 14 (App Router) + TypeScript
 - Tailwind CSS
-- Browser Web Speech API (with manual text fallback)
+- Browser `MediaRecorder` + Mistral transcription API (with manual text fallback)
 - Next.js API routes (`/api/evaluate`, `/api/health`)
 - Mistral API (server-side only)
 
@@ -36,6 +36,7 @@ Optional:
 
 ```bash
 MISTRAL_MODEL=mistral-large-latest
+MISTRAL_TRANSCRIPTION_MODEL=voxtral-mini-latest
 ```
 
 ## Scripts
@@ -63,6 +64,14 @@ MISTRAL_MODEL=mistral-large-latest
 ```text
 [Browser UI (Next.js App Router)]
     |
+    | POST /api/transcribe (audio)
+    v
+[Mistral Audio Transcription]
+    |
+    | transcript
+    v
+[Browser UI]
+    |
     | POST /api/evaluate
     v
 [Next.js API Route]
@@ -79,6 +88,7 @@ MISTRAL_MODEL=mistral-large-latest
 ## API Endpoints
 
 - `GET /api/health` -> `{ "ok": true }`
+- `POST /api/transcribe` -> returns voice transcript from audio using Mistral
 - `POST /api/evaluate` -> returns:
   - `npcReply`
   - `scores` (`persuasion`, `confidence`, `hesitation`, `consistency`)
@@ -87,9 +97,9 @@ MISTRAL_MODEL=mistral-large-latest
 
 ## Limitations
 
-- Web Speech API support varies by browser/platform.
+- MediaRecorder support varies by browser/platform.
 - Some browsers require secure context and explicit microphone permission.
-- Manual text input fallback is included when speech recognition is unavailable.
+- Manual text input fallback is included when microphone capture/transcription is unavailable.
 
 ## Safety Note
 

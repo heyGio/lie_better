@@ -30,6 +30,11 @@ interface EvaluateResponse {
   npcMood: NpcMood;
 }
 
+interface TranscribeResponse {
+  transcript?: string;
+  error?: string;
+}
+
 const START_TIME = 120;
 const START_SUSPICION = 50;
 const INITIAL_NPC_LINE = "Who is this? You have 2 minutes. Talk.";
@@ -44,6 +49,23 @@ function moodFromSuspicion(value: number): NpcMood {
   return "calm";
 }
 
+function pickSupportedMimeType() {
+  if (typeof MediaRecorder === "undefined") return "";
+  const candidates = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/ogg;codecs=opus",
+    "audio/mp4"
+  ];
+
+  for (const type of candidates) {
+    if (MediaRecorder.isTypeSupported(type)) {
+      return type;
+    }
+  }
+  return "";
+}
+
 export default function Home() {
   const [gameStatus, setGameStatus] = useState<GameStatus>("idle");
   const [timeRemaining, setTimeRemaining] = useState<number>(START_TIME);
@@ -53,43 +75,60 @@ export default function Home() {
   const [revealedCode, setRevealedCode] = useState<string | null>(null);
   const [playerCodeInput, setPlayerCodeInput] = useState<string>("");
   const [isRecording, setIsRecording] = useState<boolean>(false);
+  const [isTranscribing, setIsTranscribing] = useState<boolean>(false);
   const [lastTranscript, setLastTranscript] = useState<string>("");
   const [draftTranscript, setDraftTranscript] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
-  const [speechSupported, setSpeechSupported] = useState<boolean>(false);
+  const [recordingSupported, setRecordingSupported] = useState<boolean>(false);
+  const [micError, setMicError] = useState<string>("");
   const [loseReason, setLoseReason] = useState<LoseReason>(null);
   const [flashLoss, setFlashLoss] = useState<boolean>(false);
 
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
-  const speechTranscriptRef = useRef<string>("");
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const discardRecordingRef = useRef<boolean>(false);
 
   const isDanger = gameStatus === "playing" && timeRemaining < 30;
-  const stopRecognition = useCallback(() => {
-    const recognition = recognitionRef.current;
-    if (!recognition) {
+
+  const releaseMicrophone = useCallback(() => {
+    const stream = mediaStreamRef.current;
+    if (!stream) return;
+
+    stream.getTracks().forEach((track) => track.stop());
+    mediaStreamRef.current = null;
+  }, []);
+
+  const stopRecording = useCallback((discard: boolean = false) => {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder) {
       setIsRecording(false);
       return;
     }
 
-    try {
-      recognition.stop();
-    } catch {
-      // Ignored: stop can throw if recognition isn't started.
-    } finally {
+    if (recorder.state === "recording") {
+      discardRecordingRef.current = discard;
+      try {
+        recorder.stop();
+      } catch {
+        // Ignore stop errors.
+      }
+    } else {
       setIsRecording(false);
     }
   }, []);
 
   const triggerLoss = useCallback(
     (reason: Exclude<LoseReason, null>) => {
-      stopRecognition();
+      stopRecording(true);
       setLoading(false);
+      setIsTranscribing(false);
       setGameStatus("lost");
       setLoseReason(reason);
       setFlashLoss(true);
       setTimeout(() => setFlashLoss(false), 900);
     },
-    [stopRecognition]
+    [stopRecording]
   );
 
   const submitTurn = useCallback(
@@ -100,6 +139,7 @@ export default function Home() {
       setLoading(true);
       setLastTranscript(transcript);
       setDraftTranscript("");
+      setMicError("");
 
       const playerLine: HistoryItem = { role: "player", content: transcript };
       const historyForEval = [...history, playerLine];
@@ -162,58 +202,63 @@ export default function Home() {
     [gameStatus, history, loading, suspicion, timeRemaining, triggerLoss]
   );
 
+  const transcribeAndSubmit = useCallback(
+    async (audioBlob: Blob) => {
+      if (gameStatus !== "playing") return;
+
+      const ext = audioBlob.type.includes("ogg")
+        ? "ogg"
+        : audioBlob.type.includes("mp4")
+          ? "mp4"
+          : "webm";
+      const file = new File([audioBlob], `turn-${Date.now()}.${ext}`, {
+        type: audioBlob.type || "audio/webm"
+      });
+      const formData = new FormData();
+      formData.append("audio", file);
+      formData.append("language", "en");
+
+      setIsTranscribing(true);
+      setMicError("");
+
+      try {
+        const response = await fetch("/api/transcribe", {
+          method: "POST",
+          body: formData
+        });
+
+        const payload = (await response.json().catch(() => ({}))) as TranscribeResponse;
+        if (!response.ok) {
+          throw new Error(payload.error || "Transcription failed.");
+        }
+
+        const transcript = (payload.transcript || "").trim();
+        if (!transcript) {
+          throw new Error("No transcript returned.");
+        }
+
+        setDraftTranscript(transcript);
+        await submitTurn(transcript);
+      } catch (error) {
+        console.error("🚨  [Game] Audio transcription failed", error);
+        setMicError("Could not transcribe audio. Type your line manually.");
+      } finally {
+        setIsTranscribing(false);
+      }
+    },
+    [gameStatus, submitTurn]
+  );
+
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const RecognitionCtor = window.SpeechRecognition ?? window.webkitSpeechRecognition;
-    if (!RecognitionCtor) {
-      setSpeechSupported(false);
-      return;
-    }
+    const hasMediaRecorder =
+      typeof window.MediaRecorder !== "undefined" &&
+      !!navigator.mediaDevices &&
+      typeof navigator.mediaDevices.getUserMedia === "function";
 
-    setSpeechSupported(true);
-
-    const recognition = new RecognitionCtor();
-    recognition.lang = "en-US";
-    recognition.continuous = false;
-    recognition.interimResults = true;
-    recognition.maxAlternatives = 1;
-
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
-      let aggregate = "";
-      for (let i = 0; i < event.results.length; i += 1) {
-        aggregate += event.results[i][0]?.transcript ?? "";
-      }
-      const text = aggregate.trim();
-      speechTranscriptRef.current = text;
-      setDraftTranscript(text);
-    };
-
-    recognition.onerror = () => {
-      setIsRecording(false);
-    };
-
-    recognition.onend = () => {
-      setIsRecording(false);
-      const spoken = speechTranscriptRef.current.trim();
-      speechTranscriptRef.current = "";
-      if (spoken) void submitTurn(spoken);
-    };
-
-    recognitionRef.current = recognition;
-
-    return () => {
-      recognition.onresult = null;
-      recognition.onerror = null;
-      recognition.onend = null;
-      try {
-        recognition.stop();
-      } catch {
-        // Safe cleanup.
-      }
-      recognitionRef.current = null;
-    };
-  }, [submitTurn]);
+    setRecordingSupported(hasMediaRecorder);
+  }, []);
 
   useEffect(() => {
     if (gameStatus !== "playing") return;
@@ -229,6 +274,13 @@ export default function Home() {
     }
   }, [gameStatus, timeRemaining, triggerLoss]);
 
+  useEffect(() => {
+    return () => {
+      stopRecording(true);
+      releaseMicrophone();
+    };
+  }, [releaseMicrophone, stopRecording]);
+
   const handleStartCall = () => {
     setGameStatus("playing");
     setTimeRemaining(START_TIME);
@@ -239,12 +291,14 @@ export default function Home() {
     setPlayerCodeInput("");
     setLastTranscript("");
     setDraftTranscript("");
+    setMicError("");
     setLoseReason(null);
     setFlashLoss(false);
   };
 
   const handleReset = () => {
-    stopRecognition();
+    stopRecording(true);
+    releaseMicrophone();
     setGameStatus("idle");
     setTimeRemaining(START_TIME);
     setSuspicion(START_SUSPICION);
@@ -254,30 +308,88 @@ export default function Home() {
     setPlayerCodeInput("");
     setLastTranscript("");
     setDraftTranscript("");
+    setMicError("");
     setLoseReason(null);
     setLoading(false);
+    setIsTranscribing(false);
     setFlashLoss(false);
   };
 
-  const handlePressStart = () => {
-    if (!speechSupported || gameStatus !== "playing" || loading || isRecording) return;
-    const recognition = recognitionRef.current;
-    if (!recognition) return;
+  const handlePressStart = async () => {
+    if (!recordingSupported || gameStatus !== "playing" || loading || isTranscribing || isRecording) {
+      return;
+    }
 
-    speechTranscriptRef.current = "";
     setDraftTranscript("");
+    setMicError("");
 
     try {
-      recognition.start();
+      let stream = mediaStreamRef.current;
+      if (!stream) {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          }
+        });
+        mediaStreamRef.current = stream;
+      }
+
+      const mimeType = pickSupportedMimeType();
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+
+      mediaRecorderRef.current = recorder;
+      audioChunksRef.current = [];
+      discardRecordingRef.current = false;
+
+      recorder.ondataavailable = (event: BlobEvent) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onerror = (event) => {
+        console.error("🚨  [Audio] Recorder error", event);
+        setMicError("Microphone recorder failed. Try typing manually.");
+        setIsRecording(false);
+      };
+
+      recorder.onstop = async () => {
+        setIsRecording(false);
+
+        if (discardRecordingRef.current) {
+          discardRecordingRef.current = false;
+          audioChunksRef.current = [];
+          return;
+        }
+
+        const audioBlob = new Blob(audioChunksRef.current, {
+          type: recorder.mimeType || mimeType || "audio/webm"
+        });
+        audioChunksRef.current = [];
+
+        if (audioBlob.size < 1024) {
+          setMicError("Audio too short. Hold the button while speaking.");
+          return;
+        }
+
+        await transcribeAndSubmit(audioBlob);
+      };
+
+      recorder.start(200);
       setIsRecording(true);
-    } catch {
+      console.info("🎙️  [Audio] Recording started");
+    } catch (error) {
+      console.error("🚨  [Audio] Unable to start recording", error);
+      setMicError("Microphone access denied or unavailable. Use manual text input.");
       setIsRecording(false);
     }
   };
 
   const handlePressEnd = () => {
     if (!isRecording) return;
-    stopRecognition();
+    stopRecording(false);
   };
 
   const handleManualSend = () => {
@@ -288,7 +400,7 @@ export default function Home() {
     if (gameStatus !== "playing" || !revealedCode) return;
 
     if (playerCodeInput === revealedCode) {
-      stopRecognition();
+      stopRecording(true);
       setGameStatus("won");
       setLoseReason(null);
       setHistory((prev) => [
@@ -312,6 +424,8 @@ export default function Home() {
     }
   };
 
+  const busy = loading || isTranscribing;
+
   return (
     <main className="relative min-h-screen px-4 py-6 md:px-8 md:py-10">
       <div className={`pointer-events-none fixed inset-0 ${flashLoss ? "loss-flash" : ""}`} />
@@ -331,7 +445,7 @@ export default function Home() {
             <StatusPill mood={npcMood} />
           </div>
 
-          <ConversationLog history={history} loading={loading} />
+          <ConversationLog history={history} loading={busy} />
           <Meters suspicion={suspicion} />
 
           <div className="text-xs text-slate-400">
@@ -341,27 +455,37 @@ export default function Home() {
             </span>
           </div>
 
+          {micError ? (
+            <p className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+              {micError}
+            </p>
+          ) : null}
+
           {gameStatus === "playing" ? (
             <div className="space-y-3">
-              {speechSupported ? (
+              {recordingSupported ? (
                 <PushToTalk
-                  disabled={loading}
+                  disabled={busy}
                   isRecording={isRecording}
-                  onPressStart={handlePressStart}
+                  onPressStart={() => {
+                    void handlePressStart();
+                  }}
                   onPressEnd={handlePressEnd}
                 />
               ) : (
                 <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
-                  Web Speech API is unavailable in this browser. Use manual text input below.
+                  Browser microphone recording is unavailable. Use manual text input below.
                 </p>
               )}
 
               <TranscriptInput
                 value={draftTranscript}
-                disabled={loading || gameStatus !== "playing"}
+                disabled={busy || gameStatus !== "playing"}
                 helperText={
-                  speechSupported
-                    ? "Speech text appears here and auto-sends on release. You can also edit and send manually."
+                  recordingSupported
+                    ? isTranscribing
+                      ? "Transcribing with Mistral..."
+                      : "Hold Push to Talk, release to transcribe with Mistral, then auto-send."
                     : "Type your line manually, then send."
                 }
                 onChange={setDraftTranscript}
@@ -371,7 +495,7 @@ export default function Home() {
               <CodeEntry
                 codeKnown={Boolean(revealedCode)}
                 value={playerCodeInput}
-                disabled={loading}
+                disabled={busy}
                 onChange={setPlayerCodeInput}
                 onDefuse={handleDefuse}
               />
