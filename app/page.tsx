@@ -34,6 +34,11 @@ interface TranscribeResponse {
   error?: string;
 }
 
+interface NpcSpeechProfile {
+  suspicion: number;
+  mood: NpcMood;
+}
+
 interface LevelMeta {
   title: string;
   npcName: string;
@@ -123,6 +128,12 @@ export default function Home() {
   const recordingSessionRef = useRef<number>(0);
   const partialInFlightRef = useRef<boolean>(false);
   const partialLastRunAtRef = useRef<number>(0);
+  const npcAudioRef = useRef<HTMLAudioElement | null>(null);
+  const npcAudioUrlRef = useRef<string | null>(null);
+  const thinkingPulseIntervalRef = useRef<number | null>(null);
+  const thinkingPulseTimeoutRef = useRef<number | null>(null);
+  const thinkingAudioContextRef = useRef<AudioContext | null>(null);
+  const ttsTokenRef = useRef<number>(0);
 
   const levelMeta = LEVELS[currentLevel];
   const busy = loading || isTranscribing;
@@ -156,9 +167,197 @@ export default function Home() {
     }
   }, []);
 
+  const stopNpcVoice = useCallback(() => {
+    ttsTokenRef.current += 1;
+
+    const audio = npcAudioRef.current;
+    if (audio) {
+      try {
+        audio.pause();
+        audio.src = "";
+      } catch {
+        // Ignore audio cleanup errors.
+      }
+      npcAudioRef.current = null;
+    }
+
+    if (npcAudioUrlRef.current) {
+      URL.revokeObjectURL(npcAudioUrlRef.current);
+      npcAudioUrlRef.current = null;
+    }
+  }, []);
+
+  const stopThinkingPulse = useCallback(() => {
+    if (thinkingPulseIntervalRef.current !== null) {
+      window.clearInterval(thinkingPulseIntervalRef.current);
+      thinkingPulseIntervalRef.current = null;
+    }
+    if (thinkingPulseTimeoutRef.current !== null) {
+      window.clearTimeout(thinkingPulseTimeoutRef.current);
+      thinkingPulseTimeoutRef.current = null;
+    }
+  }, []);
+
+  const playThinkingPulse = useCallback(() => {
+    if (typeof window === "undefined") return;
+
+    const AudioContextCtor =
+      window.AudioContext ||
+      (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioContextCtor) return;
+
+    if (!thinkingAudioContextRef.current) {
+      thinkingAudioContextRef.current = new AudioContextCtor();
+    }
+
+    const ctx = thinkingAudioContextRef.current;
+    if (ctx.state === "suspended") {
+      void ctx.resume().catch(() => {
+        // Ignore resume failures (autoplay policies).
+      });
+    }
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "triangle";
+    osc.frequency.setValueAtTime(620, ctx.currentTime);
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.02, ctx.currentTime + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.12);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.13);
+  }, []);
+
+  const startThinkingPulse = useCallback(() => {
+    if (thinkingPulseIntervalRef.current !== null) return;
+
+    playThinkingPulse();
+    thinkingPulseIntervalRef.current = window.setInterval(() => {
+      playThinkingPulse();
+    }, 620);
+
+    thinkingPulseTimeoutRef.current = window.setTimeout(() => {
+      stopThinkingPulse();
+    }, 7000);
+  }, [playThinkingPulse, stopThinkingPulse]);
+
+  const speakNpcLine = useCallback(
+    async (content: string, level: LevelId, profile?: NpcSpeechProfile) => {
+      if (level !== 1) return;
+
+      const text = content.trim();
+      if (!text) return;
+
+      const suspicionForVoice = clamp(profile?.suspicion ?? suspicion, 0, 100);
+      const moodForVoice: NpcMood = profile?.mood ?? npcMood;
+
+      const token = ttsTokenRef.current + 1;
+      ttsTokenRef.current = token;
+
+      stopNpcVoice();
+      startThinkingPulse();
+
+      try {
+        const response = await fetch("/api/tts", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            text: text.slice(0, 260),
+            level: 1,
+            suspicion: suspicionForVoice,
+            mood: moodForVoice
+          })
+        });
+
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => ({}))) as { error?: string };
+          throw new Error(payload.error || "TTS request failed.");
+        }
+
+        const audioBlob = await response.blob();
+        if (!audioBlob.size) {
+          throw new Error("TTS returned empty audio.");
+        }
+
+        if (token !== ttsTokenRef.current) return;
+
+        const audioUrl = URL.createObjectURL(audioBlob);
+        npcAudioUrlRef.current = audioUrl;
+        const audio = new Audio(audioUrl);
+        audio.preload = "auto";
+
+        audio.oncanplay = () => {
+          if (token === ttsTokenRef.current) {
+            stopThinkingPulse();
+          }
+        };
+
+        audio.onplaying = () => {
+          if (token === ttsTokenRef.current) {
+            stopThinkingPulse();
+          }
+        };
+
+        audio.onended = () => {
+          if (npcAudioRef.current === audio) {
+            npcAudioRef.current = null;
+          }
+          if (npcAudioUrlRef.current === audioUrl) {
+            URL.revokeObjectURL(audioUrl);
+            npcAudioUrlRef.current = null;
+          }
+          stopThinkingPulse();
+        };
+
+        audio.onerror = () => {
+          if (npcAudioRef.current === audio) {
+            npcAudioRef.current = null;
+          }
+          if (npcAudioUrlRef.current === audioUrl) {
+            URL.revokeObjectURL(audioUrl);
+            npcAudioUrlRef.current = null;
+          }
+          stopThinkingPulse();
+        };
+
+        if (token !== ttsTokenRef.current) return;
+        npcAudioRef.current = audio;
+        await audio.play();
+        console.info("🔊  [TTS] Level 1 NPC voice started");
+      } catch (error) {
+        console.warn("⚠️  [TTS] NPC voice skipped", error);
+        stopThinkingPulse();
+      }
+    },
+    [npcMood, startThinkingPulse, stopNpcVoice, stopThinkingPulse, suspicion]
+  );
+
+  const pushNpcLine = useCallback(
+    (
+      content: string,
+      options?: {
+        level?: LevelId;
+        speechProfile?: NpcSpeechProfile;
+      }
+    ) => {
+      const level = options?.level ?? currentLevel;
+      setHistory((prev) => [...prev, { role: "npc", content }]);
+      if (level === 1) {
+        void speakNpcLine(content, level, options?.speechProfile);
+      }
+    },
+    [currentLevel, speakNpcLine]
+  );
+
   const triggerLoss = useCallback(
     (reason: Exclude<LoseReason, null>) => {
       stopRecording(true);
+      stopNpcVoice();
+      stopThinkingPulse();
       setLoading(false);
       setIsTranscribing(false);
       setIsLiveSyncing(false);
@@ -167,7 +366,7 @@ export default function Home() {
       setFlashLoss(true);
       setTimeout(() => setFlashLoss(false), 900);
     },
-    [stopRecording]
+    [stopNpcVoice, stopRecording, stopThinkingPulse]
   );
 
   const submitTurn = useCallback(
@@ -207,7 +406,13 @@ export default function Home() {
 
         const data = (await response.json()) as EvaluateResponse;
 
-        setHistory((prev) => [...prev, { role: "npc", content: data.npcReply }]);
+        pushNpcLine(data.npcReply, {
+          level: currentLevel,
+          speechProfile: {
+            suspicion: data.newSuspicion,
+            mood: data.npcMood
+          }
+        });
         setSuspicion(clamp(data.newSuspicion, 0, 100));
         setNpcMood(data.npcMood);
 
@@ -223,16 +428,18 @@ export default function Home() {
         const fallbackSuspicion = clamp(suspicion + 4, 0, 100);
         setSuspicion(fallbackSuspicion);
         setNpcMood(moodFromSuspicion(fallbackSuspicion));
-        setHistory((prev) => [
-          ...prev,
+        pushNpcLine(
+          currentLevel === 2
+            ? "Mrrp... static noise. Say it again, clearly."
+            : "Line is breaking. You're sounding uncertain. Speak clearly.",
           {
-            role: "npc",
-            content:
-              currentLevel === 2
-                ? "Mrrp... static noise. Say it again, clearly."
-                : "Line is breaking. You're sounding uncertain. Speak clearly."
+            level: currentLevel,
+            speechProfile: {
+              suspicion: fallbackSuspicion,
+              mood: moodFromSuspicion(fallbackSuspicion)
+            }
           }
-        ]);
+        );
         if (fallbackSuspicion >= 85) {
           triggerLoss("CALL ENDED");
         }
@@ -240,7 +447,16 @@ export default function Home() {
         setLoading(false);
       }
     },
-    [currentLevel, gameStatus, history, loading, suspicion, timeRemaining, triggerLoss]
+    [
+      currentLevel,
+      gameStatus,
+      history,
+      loading,
+      pushNpcLine,
+      suspicion,
+      timeRemaining,
+      triggerLoss
+    ]
   );
 
   const transcribeBlob = useCallback(async (audioBlob: Blob): Promise<string> => {
@@ -346,12 +562,20 @@ export default function Home() {
   const startLevel = useCallback(
     (level: LevelId) => {
       stopRecording(true);
+      stopNpcVoice();
       setCurrentLevel(level);
       setGameStatus("playing");
       setTimeRemaining(START_TIME);
       setSuspicion(START_SUSPICION);
       setNpcMood("suspicious");
-      setHistory([{ role: "npc", content: LEVELS[level].intro }]);
+      const intro = LEVELS[level].intro;
+      setHistory([{ role: "npc", content: intro }]);
+      if (level === 1) {
+        void speakNpcLine(intro, level, {
+          suspicion: START_SUSPICION,
+          mood: "suspicious"
+        });
+      }
       setRevealedCode(null);
       setPlayerCodeInput("");
       setLastTranscript("");
@@ -364,7 +588,7 @@ export default function Home() {
       setIsLiveSyncing(false);
       setFlashLoss(false);
     },
-    [stopRecording]
+    [speakNpcLine, stopNpcVoice, stopRecording]
   );
 
   useEffect(() => {
@@ -397,12 +621,22 @@ export default function Home() {
   useEffect(() => {
     return () => {
       stopRecording(true);
+      stopNpcVoice();
+      stopThinkingPulse();
       releaseMicrophone();
+      if (thinkingAudioContextRef.current) {
+        void thinkingAudioContextRef.current.close().catch(() => {
+          // Ignore close failures.
+        });
+        thinkingAudioContextRef.current = null;
+      }
     };
-  }, [releaseMicrophone, stopRecording]);
+  }, [releaseMicrophone, stopNpcVoice, stopRecording, stopThinkingPulse]);
 
   const handleResetToIdle = () => {
     stopRecording(true);
+    stopNpcVoice();
+    stopThinkingPulse();
     releaseMicrophone();
     setCurrentLevel(1);
     setGameStatus("idle");
@@ -426,6 +660,8 @@ export default function Home() {
   const handlePressStart = async () => {
     if (!recordingSupported || gameStatus !== "playing" || busy || isRecording) return;
 
+    stopNpcVoice();
+    stopThinkingPulse();
     setLiveTranscript("");
     setDraftTranscript("");
     setMicError("");
@@ -471,6 +707,8 @@ export default function Home() {
       recorder.onstop = async () => {
         setIsRecording(false);
         setIsLiveSyncing(false);
+        partialInFlightRef.current = false;
+        mediaRecorderRef.current = null;
 
         if (discardRecordingRef.current) {
           discardRecordingRef.current = false;
@@ -485,7 +723,7 @@ export default function Home() {
         });
         audioChunksRef.current = [];
 
-        if (audioBlob.size < 1024) {
+        if (audioBlob.size < 150) {
           setMicError("Audio too short. Hold the button while speaking.");
           return;
         }
@@ -513,18 +751,21 @@ export default function Home() {
 
     if (playerCodeInput === revealedCode) {
       stopRecording(true);
+      stopNpcVoice();
       setGameStatus("won");
       setLoseReason(null);
-      setHistory((prev) => [
-        ...prev,
+      pushNpcLine(
+        currentLevel === 1
+          ? "You win this round. I'm out."
+          : "Purrfect! Device is safe. You may pet the cat.",
         {
-          role: "npc",
-          content:
-            currentLevel === 1
-              ? "You win this round. I'm out."
-              : "Purrfect! Device is safe. You may pet the cat."
+          level: currentLevel,
+          speechProfile: {
+            suspicion,
+            mood: npcMood
+          }
         }
-      ]);
+      );
       return;
     }
 
@@ -532,16 +773,18 @@ export default function Home() {
     setSuspicion(raisedSuspicion);
     setNpcMood(moodFromSuspicion(raisedSuspicion));
     setPlayerCodeInput("");
-    setHistory((prev) => [
-      ...prev,
+    pushNpcLine(
+      currentLevel === 2
+        ? "Mrrrp? Wrong code. Less panic, more gentle vibes."
+        : "Wrong code. You're guessing. Why should I trust you?",
       {
-        role: "npc",
-        content:
-          currentLevel === 2
-            ? "Mrrrp? Wrong code. Less panic, more gentle vibes."
-            : "Wrong code. You're guessing. Why should I trust you?"
+        level: currentLevel,
+        speechProfile: {
+          suspicion: raisedSuspicion,
+          mood: moodFromSuspicion(raisedSuspicion)
+        }
       }
-    ]);
+    );
 
     if (raisedSuspicion >= 85) {
       triggerLoss("CALL ENDED");

@@ -8,9 +8,11 @@ Team: **Golden gAI**
 
 - Next.js 14 (App Router) + TypeScript
 - Tailwind CSS
-- Browser `MediaRecorder` + Mistral transcription API (with manual text fallback)
+- Browser `MediaRecorder` + Mistral transcription API
 - Next.js API routes (`/api/evaluate`, `/api/health`)
 - Mistral API (server-side only)
+- ElevenLabs TTS for Level 1 NPC voice replies
+  - Voice tone is dynamically adapted from NPC suspicion/mood
 
 ## Quick Start
 
@@ -37,6 +39,11 @@ Optional:
 ```bash
 MISTRAL_MODEL=mistral-large-latest
 MISTRAL_TRANSCRIPTION_MODEL=voxtral-mini-latest
+ELEVENLABS_API_KEY=YOUR_KEY_HERE
+ELEVENLABS_MODEL_ID=eleven_flash_v2_5
+ELEVENLABS_VOICE_ID=zYcjlYFOd3taleS0gkk3
+ELEVENLABS_OUTPUT_FORMAT=mp3_22050_32
+ELEVENLABS_OPTIMIZE_STREAMING_LATENCY=4
 ```
 
 ## Scripts
@@ -72,6 +79,14 @@ MISTRAL_TRANSCRIPTION_MODEL=voxtral-mini-latest
     v
 [Browser UI]
     |
+    | POST /api/tts (level 1 npc reply)
+    v
+[ElevenLabs TTS]
+    |
+    | audio/mpeg
+    v
+[Browser audio playback]
+    |
     | POST /api/evaluate
     v
 [Next.js API Route]
@@ -89,6 +104,8 @@ MISTRAL_TRANSCRIPTION_MODEL=voxtral-mini-latest
 
 - `GET /api/health` -> `{ "ok": true }`
 - `POST /api/transcribe` -> returns voice transcript from audio using Mistral
+- `GET /api/tts` -> low-latency streaming level-1 NPC voice audio using ElevenLabs
+- `POST /api/tts` -> non-streaming fallback level-1 NPC voice audio
 - `POST /api/evaluate` -> returns:
   - `npcReply`
   - `scores` (`persuasion`, `confidence`, `hesitation`, `consistency`)
@@ -99,7 +116,7 @@ MISTRAL_TRANSCRIPTION_MODEL=voxtral-mini-latest
 
 - MediaRecorder support varies by browser/platform.
 - Some browsers require secure context and explicit microphone permission.
-- Manual text input fallback is included when microphone capture/transcription is unavailable.
+- Browser autoplay policies can block speech playback until user interaction.
 
 ## Safety Note
 
