@@ -56,14 +56,15 @@ interface EvaluateResponse {
 
 const START_TIME = 120;
 const START_SUSPICION = 50;
-const OPENING_LINE = "I planted a bomb at your hackathon. You have 2 minutes. Convince me.";
+const OPENING_LINE =
+  "I planted a bomb at your hackathon. You have 2 minutes. Convince me to give you the code.";
 const DARKEN_DELAY_MS = 180;
 const OPENING_LINE_DELAY_MS = 980;
-const TALK_READY_DELAY_MS = 1720;
 const BOMB_TIMER_APPEAR_DELAY_MS = 2000;
 const INTRO_TITLE = "Lie Better";
 const INTRO_PROMPT = "press enter....";
 const CALLER_NAME = "Unknown Caller";
+const LEVEL1_FINAL_STAGE = 4;
 
 const PLAYER_EMOTIONS: PlayerEmotion[] = [
   "angry",
@@ -74,6 +75,16 @@ const PLAYER_EMOTIONS: PlayerEmotion[] = [
   "sad",
   "surprise"
 ];
+
+const EMOTION_VISUALS: Record<PlayerEmotion, { emoji: string; fill: string; stroke: string; glow: string }> = {
+  angry: { emoji: "😠", fill: "#fee2e2", stroke: "#ef4444", glow: "rgba(239,68,68,0.55)" },
+  disgust: { emoji: "🤢", fill: "#dcfce7", stroke: "#22c55e", glow: "rgba(34,197,94,0.5)" },
+  fear: { emoji: "😨", fill: "#dbeafe", stroke: "#3b82f6", glow: "rgba(59,130,246,0.52)" },
+  happy: { emoji: "😄", fill: "#fef9c3", stroke: "#eab308", glow: "rgba(234,179,8,0.5)" },
+  neutral: { emoji: "😐", fill: "#f1f5f9", stroke: "#94a3b8", glow: "rgba(148,163,184,0.45)" },
+  sad: { emoji: "😢", fill: "#e0f2fe", stroke: "#0ea5e9", glow: "rgba(14,165,233,0.5)" },
+  surprise: { emoji: "😮", fill: "#ffedd5", stroke: "#f97316", glow: "rgba(249,115,22,0.5)" }
+};
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -200,6 +211,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [micError, setMicError] = useState("");
   const [isNpcSpeaking, setIsNpcSpeaking] = useState(false);
+  const [hasMicPrimed, setHasMicPrimed] = useState(false);
 
   const [revealedCode, setRevealedCode] = useState<string | null>(null);
   const [playerCodeInput, setPlayerCodeInput] = useState("");
@@ -309,7 +321,7 @@ export default function Home() {
   }, [stopExplosionSound]);
 
   const speakNpcLine = useCallback(
-    async (text: string, mood: NpcMood, suspicionLevel: number) => {
+    async (text: string, mood: NpcMood, suspicionLevel: number, onDone?: () => void) => {
       const cleaned = text.trim();
       if (!cleaned) return;
 
@@ -337,6 +349,7 @@ export default function Home() {
           npcAudioRef.current = null;
         }
         setIsNpcSpeaking(false);
+        onDone?.();
         console.info("✅  [TTS] NPC voice playback ended");
       };
 
@@ -345,6 +358,7 @@ export default function Home() {
           npcAudioRef.current = null;
         }
         setIsNpcSpeaking(false);
+        onDone?.();
         setStatusLine("Caller audio unavailable. Continue the call.");
         console.error("🚨  [TTS] NPC voice playback failed", event);
       };
@@ -356,6 +370,7 @@ export default function Home() {
           npcAudioRef.current = null;
         }
         setIsNpcSpeaking(false);
+        onDone?.();
         setStatusLine("Browser blocked caller audio. Continue the call.");
         console.error("🚨  [TTS] Browser blocked or failed audio playback", error);
       }
@@ -504,7 +519,7 @@ export default function Home() {
         setSuspicion(clamp(data.newSuspicion, 0, 100));
         setNpcMood(data.npcMood);
         if (typeof data.nextStage === "number" && Number.isFinite(data.nextStage)) {
-          setStage(clamp(Math.round(data.nextStage), 1, 5));
+          setStage(clamp(Math.round(data.nextStage), 1, LEVEL1_FINAL_STAGE));
         }
 
         console.info("🎭  [Turn] NPC evaluation", {
@@ -529,8 +544,9 @@ export default function Home() {
         } else if (data.shouldHangUp) {
           setStatusLine("Caller mocks you. Keep trying before the timer hits zero.");
         } else {
-          const nextStage = typeof data.nextStage === "number" ? clamp(Math.round(data.nextStage), 1, 5) : stage;
-          setStatusLine(`Stage ${nextStage}/5.`);
+          const nextStage =
+            typeof data.nextStage === "number" ? clamp(Math.round(data.nextStage), 1, LEVEL1_FINAL_STAGE) : stage;
+          setStatusLine(`Stage ${nextStage}/${LEVEL1_FINAL_STAGE}.`);
         }
 
         void speakNpcLine(data.npcReply, data.npcMood, data.newSuspicion);
@@ -672,6 +688,7 @@ export default function Home() {
 
       recorder.start();
       setIsRecording(true);
+      setHasMicPrimed(true);
       setStatusLine("Recording... click again to send.");
       console.info("🎙️  [Audio] Recording started from mic button");
     } catch (error) {
@@ -796,6 +813,7 @@ export default function Home() {
     setIsRecording(false);
     setIsTranscribing(false);
     setLoading(false);
+    setHasMicPrimed(false);
 
     replaceHistory([]);
     setHasStarted(true);
@@ -822,15 +840,14 @@ export default function Home() {
       replaceHistory([{ role: "npc", content: OPENING_LINE }]);
       setTimerRunning(true);
       setStatusLine("Unknown Caller is speaking...");
-      void speakNpcLine(OPENING_LINE, "suspicious", START_SUSPICION);
+      void speakNpcLine(OPENING_LINE, "suspicious", START_SUSPICION, () => {
+        setCanTalk(true);
+        setStatusLine("Your turn. Click the mic button to record.");
+        console.info("🎙️  [Intro] Click-to-record mode enabled after opening line");
+      });
       console.info("📞  [Intro] Opening line displayed, timer started");
     }, OPENING_LINE_DELAY_MS);
-
-    talkReadyTimeoutRef.current = window.setTimeout(() => {
-      setCanTalk(true);
-      setStatusLine("Your turn. Click the mic button to record.");
-      console.info("🎙️  [Intro] Click-to-record mode enabled");
-    }, TALK_READY_DELAY_MS);
+    talkReadyTimeoutRef.current = null;
   }, [
     clearIntroSequenceTimers,
     hasStarted,
@@ -1020,6 +1037,9 @@ export default function Home() {
     return { emotion, score };
   }, [lastEmotionScores]);
 
+  const recognizedEmotion = lastEmotion ?? topEmotionDetail?.emotion ?? null;
+  const recognizedEmotionVisual = recognizedEmotion ? EMOTION_VISUALS[recognizedEmotion] : null;
+
   return (
     <main className={`relative h-screen w-screen overflow-hidden select-none ${isSceneShaking ? "explode-shake" : ""}`}>
       <p className="sr-only" aria-live="polite">
@@ -1097,29 +1117,7 @@ export default function Home() {
           ) : null}
 
           <div className="pointer-events-none absolute right-4 top-4 rounded-lg border border-cyan-300/45 bg-slate-950/70 px-3 py-2 font-mono text-sm font-black uppercase tracking-[0.16em] text-cyan-100 md:right-8 md:top-8 md:text-base">
-            Stage {stage}/5
-          </div>
-
-          <div className="pointer-events-none absolute left-4 top-4 w-[min(420px,68vw)] rounded-xl border border-cyan-300/35 bg-slate-950/60 px-4 py-3 font-mono text-cyan-100 shadow-[0_0_22px_rgba(34,211,238,0.18)] backdrop-blur-sm md:left-8 md:top-8">
-            <div className="flex items-center justify-between">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-cyan-200/95 md:text-xs">
-                {CALLER_NAME} is {npcMood}
-              </p>
-            </div>
-            <div className="mt-2 flex items-center justify-between text-base font-black tracking-[0.08em] md:text-2xl">
-              <span>Suspicious Level</span>
-              <span>{suspicion}</span>
-            </div>
-            <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-slate-900/80 ring-1 ring-cyan-300/25 md:h-3">
-              <div
-                className="h-full rounded-full transition-all duration-500"
-                style={{
-                  width: `${suspicion}%`,
-                  backgroundColor: `hsl(${Math.round((100 - suspicion) * 1.2)}, 88%, 56%)`,
-                  boxShadow: `0 0 12px hsla(${Math.round((100 - suspicion) * 1.2)}, 95%, 55%, 0.42)`
-                }}
-              />
-            </div>
+            Stage {stage}/{LEVEL1_FINAL_STAGE}
           </div>
 
           <div className="absolute left-3 top-[58%] z-20 w-[32vw] max-w-[520px] min-w-[230px] -translate-y-1/2 px-1 md:left-7 md:w-[29vw] md:px-0">
@@ -1216,26 +1214,49 @@ export default function Home() {
                       Top score: {topEmotionDetail.emotion} ({Math.round(topEmotionDetail.score * 100)}%)
                     </p>
                   ) : null}
+                  {recognizedEmotion && recognizedEmotionVisual ? (
+                    <p
+                      className="mt-2 text-[11px] font-semibold uppercase tracking-[0.1em]"
+                      style={{
+                        color: recognizedEmotionVisual.fill,
+                        WebkitTextStroke: `0.7px ${recognizedEmotionVisual.stroke}`,
+                        textShadow: `0 0 8px ${recognizedEmotionVisual.glow}`
+                      }}
+                    >
+                      You sound {recognizedEmotion} {recognizedEmotionVisual.emoji}
+                    </p>
+                  ) : null}
                 </div>
               ) : null}
             </div>
           </div>
 
-          <div className="absolute bottom-5 left-1/2 z-30 flex -translate-x-1/2 flex-col items-center gap-2 md:bottom-6">
+          {canTalk ? (
+            <div
+              className={`absolute left-1/2 z-30 flex -translate-x-1/2 flex-col items-center gap-2 transition-all duration-500 ${
+                !hasMicPrimed ? "top-[53%] -translate-y-1/2" : "bottom-5 md:bottom-6"
+              }`}
+            >
             <button
               type="button"
               onClick={handleMicButtonClick}
               disabled={
                 !hasStarted || !canTalk || exploded || won || busy || isNpcSpeaking || !recordingSupported
               }
-              className={`inline-flex items-center gap-2 rounded-md border px-5 py-2 text-[11px] font-semibold uppercase tracking-[0.2em] transition md:text-xs ${
+              className={`inline-flex items-center gap-2 border font-semibold uppercase transition ${
+                canTalk && !hasMicPrimed
+                  ? "rounded-xl border-2 px-8 py-4 text-base tracking-[0.22em] md:px-12 md:py-5 md:text-4xl"
+                  : "rounded-md px-5 py-2 text-[11px] tracking-[0.2em] md:text-xs"
+              } ${
                 isRecording
                   ? "border-rose-300/70 bg-rose-500/22 text-rose-100 shadow-[0_0_20px_rgba(244,63,94,0.45)]"
                   : "border-emerald-200/55 bg-black/58 text-emerald-100 shadow-[0_0_18px_rgba(16,185,129,0.28)]"
               } disabled:cursor-not-allowed disabled:opacity-45`}
             >
               <span
-                className={`inline-flex h-2.5 w-2.5 rounded-full ring-2 ${
+                className={`inline-flex rounded-full ring-2 ${
+                  canTalk && !hasMicPrimed ? "h-4 w-4 md:h-6 md:w-6" : "h-2.5 w-2.5"
+                } ${
                   isRecording
                     ? "animate-pulse bg-rose-500 ring-rose-200/45"
                     : "bg-emerald-400/70 ring-emerald-200/35"
@@ -1244,16 +1265,19 @@ export default function Home() {
               {isRecording ? "Click to Send" : "Click to Record"}
             </button>
 
-            <p className="pointer-events-none rounded-sm bg-black/35 px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-emerald-100/90">
-              {isNpcSpeaking
-                ? "Caller speaking..."
-                : busy
-                  ? "Analyzing..."
-                  : isRecording
-                    ? "Recording live"
-                    : "Click the button to start"}
-            </p>
-          </div>
+            {isNpcSpeaking || busy || isRecording ? (
+              <p
+                className={`pointer-events-none rounded-sm bg-black/35 uppercase text-emerald-100/90 ${
+                  !hasMicPrimed
+                    ? "px-4 py-1 text-sm tracking-[0.22em] md:text-xl"
+                    : "px-2 py-0.5 text-[10px] tracking-[0.16em]"
+                }`}
+              >
+                {isNpcSpeaking ? "Caller speaking..." : busy ? "Analyzing..." : "Recording live"}
+              </p>
+            ) : null}
+            </div>
+          ) : null}
 
           {micError ? (
             <p className="pointer-events-none absolute bottom-24 left-1/2 z-30 -translate-x-1/2 rounded-lg border border-amber-500/55 bg-amber-500/20 px-3 py-2 text-xs text-amber-200 md:text-sm">

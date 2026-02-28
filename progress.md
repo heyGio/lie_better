@@ -125,3 +125,29 @@ Original prompt: Build and iterate a playable web game in this workspace, valida
   - `.env.example` and README now point to the requested model by default.
   - README notes this model may require dedicated `HF_EMOTION_API_URL` because public providers may return 404.
 - Validation: `npm run lint` and `npm run build` both pass.
+
+## 2026-03-01 - Level 1 Emotion Tutorial Refactor
+
+- Refactored level-1 progression from 5 stages to 4 strict tutorial stages in `app/api/evaluate/route.ts`.
+- New level-1 flow:
+  - stage 1: any opening line moves forward
+  - stage 2: requires detected `fear`
+  - stage 3: requires detected `angry`
+  - stage 4: requires detected `angry` again to reveal code
+- Removed old stage-5 dependency and updated all prompt/rule references (`FINAL_STAGE=4`, strict-stage rule text, level1Flow payload).
+- Rewrote stage hints/guidance patterns to align with the emotion-training tutorial wording.
+- Added explicit tutorial success logging with emoji:
+  - `✅  [Level1 Tutorial] Stage cleared`
+- Updated UI stage cap in `app/page.tsx`:
+  - added `LEVEL1_FINAL_STAGE = 4`
+  - clamped `nextStage` with the new max
+  - changed status text and HUD from `/5` to `/4`
+
+## 2026-03-01 - Validation
+
+- `npm run lint` ✅
+- `npx tsc --noEmit` ✅
+- Playwright action-loop validation skipped in this environment (project is run on external VMs; no local gameplay runtime expected here).
+- `npm run build` ❌ (environment/workspace issue unrelated to this change):
+  - Next.js lockfile patch step failed (`Cannot read properties of undefined (reading 'os')`)
+  - build then failed during page data collection (`Cannot find module for page: /api/evaluate`)

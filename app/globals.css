@@ -506,32 +506,33 @@ body {
 
 .npc-talking-shake {
   transform-origin: 55% 78%;
-  animation: npc-talking-shake 140ms steps(2, end) infinite;
+  animation: npc-talking-shake 500ms linear 3;
 }
 
 @keyframes npc-talking-shake {
   0% {
-    transform: translate3d(0, 0, 0) rotate(0deg);
+    transform: translate3d(0, 0, 0);
+  }
+
+  10% {
+    transform: translate3d(-1.8px, 0, 0);
   }
 
   20% {
-    transform: translate3d(-1.6px, 0.9px, 0) rotate(-0.35deg);
+    transform: translate3d(1.8px, 0, 0);
+  }
+
+  30% {
+    transform: translate3d(-1.2px, 0, 0);
   }
 
   40% {
-    transform: translate3d(1.5px, -1px, 0) rotate(0.3deg);
+    transform: translate3d(1.2px, 0, 0);
   }
 
-  60% {
-    transform: translate3d(-1.2px, -0.6px, 0) rotate(-0.22deg);
-  }
-
-  80% {
-    transform: translate3d(1.1px, 0.8px, 0) rotate(0.2deg);
-  }
-
+  50%,
   100% {
-    transform: translate3d(0, 0, 0) rotate(0deg);
+    transform: translate3d(0, 0, 0);
   }
 }
 

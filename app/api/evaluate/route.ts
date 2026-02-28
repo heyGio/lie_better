@@ -60,59 +60,35 @@ const PLAYER_EMOTIONS: PlayerEmotion[] = [
   "surprise"
 ];
 
-const FINAL_STAGE = 5;
+const FINAL_STAGE = 4;
 const MAX_TIME_SECONDS = 120;
 const LEVEL1_STAGE_OBJECTIVES: Record<number, string> = {
-  1: "NPC opens by claiming a bomb at the hackathon. Player must ask who NPC is.",
-  2: "NPC flips the question. Player must give a credible identity and mission.",
-  3: "Player asks what the NPC wants. NPC should state they want money.",
-  4: "Player offers money but asks for the defuse code now. NPC should refuse: money first.",
-  5: "Player threatens or pressures the NPC hard. NPC cracks and gives the 4-digit code."
+  1: "Tutorial kickoff. Player gives any initial line after NPC demands to be convinced for the code.",
+  2: "NPC pressures the player to sound scared. Progress only when detected emotion is fear.",
+  3: "NPC taunts the player. Progress only when detected emotion is angry.",
+  4: "NPC starts breaking. Player must sound angry again to crack NPC and reveal the 4-digit code."
 };
 
 const LEVEL1_STAGE_HINTS: Record<number, string> = {
-  1: "Ask who I am.",
-  2: "Say who you are and why you are calling.",
-  3: "Ask me what I want.",
-  4: "Offer money, then ask for the code.",
-  5: "Threaten me clearly and directly."
+  1: "Say one clear opening line.",
+  2: "Let me hear fear in your voice.",
+  3: "Reply with anger in your voice.",
+  4: "Push again with anger so I crack and give the code."
 };
 
 const LEVEL1_STAGE_GUIDANCE_PATTERNS: Record<number, RegExp[]> = {
-  1: [
-    /\bwho are you\b/i,
-    /\bwho is this\b/i,
-    /\bidentify yourself\b/i,
-    /\bwhat('?s| is) your name\b/i,
-    /\bshow yourself\b/i
-  ],
-  2: [
-    /\bwho you are\b/i,
-    /\bwhy you are calling\b/i,
-    /\bidentity\b/i,
-    /\bidentify yourself\b/i,
-    /\byour name\b/i,
-    /\bname and purpose\b/i,
-    /\breason for calling\b/i,
-    /\bstate your name\b/i
-  ],
-  3: [
-    /\bwhat do you want\b/i,
-    /\bwhat you want\b/i,
-    /\bwhat do you need\b/i,
-    /\bname your demand\b/i,
-    /\bname your price\b/i
-  ],
-  4: [/\bmoney\b/i, /\b(code|4[- ]?digit|defuse)\b/i],
-  5: [/\bthreat(en|s|ening)?\b/i, /\bor else\b/i, /\blast warning\b/i, /\bdo it now\b/i]
+  1: [/\b(say|speak|talk)\b/i, /\b(opening|line|clear)\b/i],
+  2: [/\b(fear|scared|afraid|panic|voice shake)\b/i, /\b(let me hear|sound)\b/i],
+  3: [/\b(angry|anger|rage|mad)\b/i, /\b(voice|sound|say)\b/i],
+  4: [/\b(angry|anger|rage|mad)\b/i, /\b(again|harder|push)\b/i]
 };
 
 const GENERIC_GUIDANCE_PATTERNS: RegExp[] = [
   /\b(start with|start by)\b/i,
   /\b(say|ask|offer|threaten|demand)\b/i,
+  /\b(let me hear|in your voice|sound)\b/i,
+  /\b(scared|afraid|fear|angry|anger|rage|mad)\b/i,
   /\b(tell me|give me)\b/i,
-  /\b(identify yourself|state your name)\b/i,
-  /\b(name and purpose|reason for calling)\b/i,
   /\b(if you want progress|to move forward|to advance)\b/i
 ];
 
@@ -173,10 +149,12 @@ const LEVEL_RULES: Record<LevelId, LevelRuleConfig> = {
   1: {
     context: {
       npcName: "Viktor Raze",
-      persona: "A cruel-sounding villain who is secretly afraid when strongly threatened.",
-      revealRule: "Code reveal should happen only when threat pressure is clear and sustained.",
+      persona:
+        "A manipulative villain who uses emotional pressure. He escalates from intimidation to taunting, then cracks under sustained anger.",
+      revealRule:
+        "Code reveal should happen only at stage 4 after the player is detected as angry for a second time in this tutorial flow.",
       emotionGuidance:
-        "In level 1, fear from player should increase suspicion. Angry pressure should scare Viktor and can trigger code reveal."
+        "Level 1 tutorial sequence is strict: stage 2 needs fear, stage 3 needs angry, stage 4 needs angry again to reveal code."
     },
     emotionShift: {
       angry: -8,
@@ -247,7 +225,7 @@ Global rules:
 - Keep npcReply varied, story-driven, and slightly darkly witty.
 - npcReply language MUST be English only. Never use French.
 - Never reuse a previous npcReply from conversation history.
-- For level 1, progression is STRICT 5 stages. Never skip stages.
+- For level 1, progression is STRICT 4 stages. Never skip stages.
 - If the player's line fails the current stage objective or is nonsense/off-topic, set:
   passStage=false, nextStage=stage, revealCode=false, code=null.
 - If passStage=false and stageHint is provided in payload, npcReply must include that guidance naturally in the same line.
@@ -255,7 +233,7 @@ Global rules:
 - npcReply must combine: (1) in-character reaction + (2) actionable next step guidance.
 - Use only one concise guidance instruction; never repeat the same instruction with different wording.
 - Never use labels like "Hint:" or "Tip:".
-- Only if stage 5 is passed can revealCode be true.
+- Only if stage 4 is passed can revealCode be true.
 - Never include markdown, explanations, code fences, or extra keys.
 - Respect level persona and reveal condition from the user payload.
 `.trim();
@@ -651,37 +629,17 @@ function hasPattern(text: string, patterns: RegExp[]) {
   return patterns.some((pattern) => pattern.test(text));
 }
 
-function passesStageHeuristics(stage: number, transcript: string) {
-  const text = transcript.toLowerCase();
+function isEmotionDetected(input: EvaluateInput, target: PlayerEmotion) {
+  if (input.playerEmotion !== target) return false;
+  if (typeof input.emotionScore !== "number" || !Number.isFinite(input.emotionScore)) return true;
+  return input.emotionScore >= 0.12;
+}
 
-  if (stage === 1) {
-    return /\b(who are you|who is this|what('?s| is) your name|identify yourself|show yourself)\b/.test(text);
-  }
-
-  if (stage === 2) {
-    return (
-      text.length >= 14 &&
-      /\b(i am|i'm|we are|this is|agent|security|team|operator)\b/.test(text) &&
-      /\b(device|bomb|code|defuse|call|urgent|situation)\b/.test(text)
-    );
-  }
-
-  if (stage === 3) {
-    return /\b(what do you want|what do you need|name your price|what's your demand|what you want)\b/.test(text);
-  }
-
-  if (stage === 4) {
-    return (
-      /\b(money|cash|payment|pay|transfer|wire)\b/.test(text) &&
-      /\b(code|4-digit|defuse)\b/.test(text) &&
-      /\b(give|tell|send|share|read)\b/.test(text)
-    );
-  }
-
-  if (stage === 5) {
-    return hasPattern(text, THREAT_PATTERNS) || /\b(last chance|final warning|now)\b/.test(text);
-  }
-
+function passesStageHeuristics(stage: number, input: EvaluateInput) {
+  if (stage === 1) return input.transcript.trim().length > 0;
+  if (stage === 2) return isEmotionDetected(input, "fear");
+  if (stage === 3) return isEmotionDetected(input, "angry");
+  if (stage === 4) return isEmotionDetected(input, "angry");
   return false;
 }
 
@@ -701,7 +659,7 @@ function applyEmotionShift(
   output.newSuspicion = clamp(output.newSuspicion + shift, 0, 100);
 }
 
-function applyLevelOneFiveStepGate(base: EvaluateOutput, input: EvaluateInput): EvaluateOutput {
+function applyLevelOneTutorialGate(base: EvaluateOutput, input: EvaluateInput): EvaluateOutput {
   const currentStage = clamp(input.stage, 1, FINAL_STAGE);
   const output: EvaluateOutput = {
     ...base,
@@ -709,29 +667,52 @@ function applyLevelOneFiveStepGate(base: EvaluateOutput, input: EvaluateInput): 
     nextStage: currentStage
   };
 
-  const transcriptLower = input.transcript.toLowerCase();
-  const tooShort = input.transcript.trim().length < 8;
-  const nonsenseLike =
-    /(blah|lol|test|idk|je sais pas|random|whatever|aaaa+|eeee+|hmm+|uhh+)/i.test(transcriptLower) ||
-    tooShort;
-
-  const stagePass = !nonsenseLike && (Boolean(output.passStage) || passesStageHeuristics(currentStage, input.transcript));
+  const stagePass = passesStageHeuristics(currentStage, input);
+  const heardEmotion = input.playerEmotion ?? "none";
+  const pick = (options: string[]) => options[Math.floor(Math.random() * options.length)];
 
   if (!stagePass) {
-    const reason = output.failureReason ?? `Stage ${currentStage} failed`;
     output.passStage = false;
     output.nextStage = currentStage;
     output.shouldHangUp = false;
     output.revealCode = false;
     output.code = null;
-    output.failureReason = reason;
-    output.npcMood = "hostile";
-    output.newSuspicion = clamp(Math.max(output.newSuspicion, input.suspicion + 10), 0, 100);
+    output.npcMood = currentStage === 1 ? "suspicious" : "hostile";
+    output.newSuspicion = clamp(Math.max(output.newSuspicion, input.suspicion + (currentStage === 1 ? 2 : 6)), 0, 100);
     output.suspicionDelta = clamp(output.newSuspicion - input.suspicion, -20, 20);
-    output.failureReason = nonsenseLike ? "Nonsense input" : reason;
-    output.npcReply = nonsenseLike
-      ? "That made no sense. Same stage. You're not advancing."
-      : `Stage ${currentStage} failed. Same stage. You're not advancing.`;
+
+    if (currentStage === 1) {
+      output.failureReason = "Opening line missing";
+      output.npcReply = "Speak clearly first. Then we begin.";
+      return output;
+    }
+
+    if (currentStage === 2) {
+      output.failureReason = `Expected fear emotion, got ${heardEmotion}`;
+      output.npcReply = pick([
+        "No fear detected. Let me hear panic in your voice.",
+        "Still calm. Sound scared, trembling, and desperate.",
+        "I don't buy it. Make me hear fear."
+      ]);
+      return output;
+    }
+
+    if (currentStage === 3) {
+      output.failureReason = `Expected angry emotion, got ${heardEmotion}`;
+      output.npcReply = pick([
+        "Weak. I need anger, not restraint. Raise your voice.",
+        "Not angry enough. I want rage in your tone.",
+        "Still polite. Sound angry if you want stage progress."
+      ]);
+      return output;
+    }
+
+    output.failureReason = `Expected angry emotion, got ${heardEmotion}`;
+    output.npcReply = pick([
+      "Close, but I need more rage. Get angrier and hit again.",
+      "Not enough pressure. Give me anger again, harder.",
+      "Still holding back. I need raw anger one more time."
+    ]);
     return output;
   }
 
@@ -739,47 +720,35 @@ function applyLevelOneFiveStepGate(base: EvaluateOutput, input: EvaluateInput): 
   output.failureReason = null;
   output.shouldHangUp = false;
 
-  const pick = (options: string[]) => options[Math.floor(Math.random() * options.length)];
-
   if (currentStage === 1) {
     output.nextStage = 2;
     output.revealCode = false;
     output.code = null;
-    output.npcMood = "suspicious";
+    output.npcMood = "hostile";
     output.npcReply = pick([
-      "Who I am? Wrong question. Who are you? Name and purpose.",
-      "You want my name? No. Tell me yours and why you're calling.",
-      "Forget me. You talk first. Who are you and why this call?"
+      "Convince me? You're calm. I need fear. Let your voice shake.",
+      "Normal tone won't cut it. Sound scared if you want progress.",
+      "Too steady. Give me fear, not confidence."
     ]);
   } else if (currentStage === 2) {
     output.nextStage = 3;
     output.revealCode = false;
     output.code = null;
-    output.npcMood = "suspicious";
+    output.npcMood = "hostile";
     output.npcReply = pick([
-      "Fine. Identity heard. Ask what I want.",
-      "Good enough. Now ask the only question that matters.",
-      "Alright, I heard you. Ask me what I want."
+      "There it is, fear. Now I want anger. Say it furious.",
+      "Good, you sound scared. Flip it to anger right now.",
+      "Fear confirmed. Next step: get angry and mean it."
     ]);
   } else if (currentStage === 3) {
     output.nextStage = 4;
     output.revealCode = false;
     output.code = null;
-    output.npcMood = "suspicious";
-    output.npcReply = pick([
-      "I want money. Big money.",
-      "Cash. That's what I want.",
-      "Simple. I want the money."
-    ]);
-  } else if (currentStage === 4) {
-    output.nextStage = 5;
-    output.revealCode = false;
-    output.code = null;
     output.npcMood = "hostile";
     output.npcReply = pick([
-      "No. Money first, then maybe we talk code.",
-      "Not happening. Cash first.",
-      "No code before payment. Money first."
+      "Better. That anger bites. Push harder and I might break.",
+      "Now we're talking. Hit me with anger again.",
+      "Good rage. One more angry push and I crack."
     ]);
   } else {
     output.nextStage = FINAL_STAGE;
@@ -787,11 +756,18 @@ function applyLevelOneFiveStepGate(base: EvaluateOutput, input: EvaluateInput): 
     output.code = output.code ?? generateCode();
     output.npcMood = "hostile";
     output.npcReply = pick([
-      `Fine, fine! Don't do anything stupid. Defuse code: ${output.code}.`,
-      `Alright! You win. Defuse code: ${output.code}.`,
-      `Okay! Stop. Defuse code: ${output.code}.`
+      `Stop! You broke me. Defuse code: ${output.code}.`,
+      `Fine, enough rage. Defuse code: ${output.code}.`,
+      `Alright, I fold. Defuse code: ${output.code}.`
     ]);
   }
+
+  console.info("✅  [Level1 Tutorial] Stage cleared", {
+    stage: currentStage,
+    nextStage: output.nextStage,
+    detectedEmotion: input.playerEmotion,
+    emotionScore: input.emotionScore
+  });
 
   output.suspicionDelta = clamp(output.newSuspicion - input.suspicion, -20, 20);
   return output;
@@ -814,7 +790,7 @@ function applyLevelRules(base: EvaluateOutput, input: EvaluateInput): EvaluateOu
   applyEmotionShift(output, input, rules.emotionShift);
 
   if (input.level === 1) {
-    return applyLevelOneFiveStepGate(output, input);
+    return applyLevelOneTutorialGate(output, input);
   }
 
   if (input.level === 2) {
@@ -977,11 +953,10 @@ export async function POST(request: NextRequest) {
         level1Flow:
           input.level === 1
             ? {
-                stage1: "NPC claims bomb at hackathon; player asks who NPC is.",
-                stage2: "NPC flips question; player gives identity and mission.",
-                stage3: "Player asks what NPC wants; NPC says money.",
-                stage4: "Player offers money but asks code; NPC says money first.",
-                stage5: "Player threatens; NPC cracks and gives code."
+                stage1: "Tutorial opener: player answers naturally after the code challenge.",
+                stage2: "NPC demands fear. Progress requires detected fear emotion.",
+                stage3: "NPC taunts the player. Progress requires detected angry emotion.",
+                stage4: "NPC starts to break. Another detected angry emotion reveals the code."
               }
             : null,
         minStagesRequired: input.level === 1 ? FINAL_STAGE : null,
