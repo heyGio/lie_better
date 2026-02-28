@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useRef } from "react";
 import type { HistoryItem } from "@/app/components/types";
 
 interface ConversationLogProps {
@@ -10,12 +9,7 @@ interface ConversationLogProps {
 }
 
 export function ConversationLog({ history, loading, maxItems = 2 }: ConversationLogProps) {
-  const bottomRef = useRef<HTMLDivElement | null>(null);
   const visibleHistory = history.slice(-maxItems);
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [visibleHistory, loading]);
 
   return (
     <div className="min-h-[170px] rounded-2xl border border-cyan-400/25 bg-slate-950/80 p-3">
@@ -52,7 +46,6 @@ export function ConversationLog({ history, loading, maxItems = 2 }: Conversation
             Unknown Caller is responding...
           </div>
         ) : null}
-        <div ref={bottomRef} />
       </div>
     </div>
   );

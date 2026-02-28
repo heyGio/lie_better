@@ -7,7 +7,6 @@ import { GameHeader } from "@/app/components/GameHeader";
 import { Meters } from "@/app/components/Meters";
 import { PushToTalk } from "@/app/components/PushToTalk";
 import { StatusPill } from "@/app/components/StatusPill";
-import { TranscriptInput } from "@/app/components/TranscriptInput";
 import type { HistoryItem, NpcMood } from "@/app/components/types";
 
 type GameStatus = "idle" | "playing" | "won" | "lost";
@@ -230,7 +229,7 @@ export default function Home() {
             role: "npc",
             content:
               currentLevel === 2
-                ? "Mrrp... static noise. Say it cleanly, or type it."
+                ? "Mrrp... static noise. Say it again, clearly."
                 : "Line is breaking. You're sounding uncertain. Speak clearly."
           }
         ]);
@@ -334,7 +333,7 @@ export default function Home() {
         await submitTurn(transcript);
       } catch (error) {
         console.error("🚨  [Game] Final transcription failed", error);
-        setMicError("Could not transcribe audio. Type your line manually.");
+        setMicError("Could not transcribe audio. Try recording again.");
       } finally {
         if (recordingSessionRef.current === sessionId) {
           setIsTranscribing(false);
@@ -464,7 +463,7 @@ export default function Home() {
 
       recorder.onerror = (event) => {
         console.error("🚨  [Audio] Recorder error", event);
-        setMicError("Microphone recorder failed. Use manual text input.");
+        setMicError("Microphone recorder failed. Retry recording.");
         setIsRecording(false);
         setIsLiveSyncing(false);
       };
@@ -499,7 +498,7 @@ export default function Home() {
       console.info("🎙️  [Audio] Recording started");
     } catch (error) {
       console.error("🚨  [Audio] Unable to start recording", error);
-      setMicError("Microphone access denied or unavailable. Use manual text input.");
+      setMicError("Microphone access denied or unavailable.");
       setIsRecording(false);
     }
   };
@@ -507,10 +506,6 @@ export default function Home() {
   const handlePressEnd = () => {
     if (!isRecording) return;
     stopRecording(false);
-  };
-
-  const handleManualSend = () => {
-    void submitTurn(draftTranscript);
   };
 
   const handleDefuse = () => {
@@ -582,6 +577,23 @@ export default function Home() {
               <p className="text-xs uppercase tracking-[0.14em] text-cyan-300">Objective</p>
               <p className="text-sm text-slate-200">{levelMeta.objective}</p>
               <p className="text-xs text-slate-400">Hint: {levelMeta.hint}</p>
+            </div>
+
+            <div className="space-y-2 rounded-xl border border-emerald-400/30 bg-emerald-500/10 p-3">
+              <p className="text-xs uppercase tracking-[0.14em] text-emerald-300">Defuse Panel</p>
+              {revealedCode ? (
+                <CodeEntry
+                  codeKnown={true}
+                  value={playerCodeInput}
+                  disabled={busy || gameStatus !== "playing"}
+                  onChange={setPlayerCodeInput}
+                  onDefuse={handleDefuse}
+                />
+              ) : (
+                <div className="rounded-lg border border-emerald-300/25 bg-slate-900/70 p-3 text-sm text-slate-300">
+                  Waiting for the 4-digit code from the caller.
+                </div>
+              )}
             </div>
           </aside>
 
@@ -666,29 +678,9 @@ export default function Home() {
                     />
                   ) : (
                     <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
-                      Browser microphone recording is unavailable. Use manual text input below.
+                      Browser microphone recording is unavailable.
                     </p>
                   )}
-
-                  <TranscriptInput
-                    value={draftTranscript}
-                    disabled={busy || gameStatus !== "playing"}
-                    helperText={
-                      recordingSupported
-                        ? "Hold Push to Talk, release to transcribe with Mistral and auto-send."
-                        : "Type your line manually, then send."
-                    }
-                    onChange={setDraftTranscript}
-                    onSend={handleManualSend}
-                  />
-
-                  <CodeEntry
-                    codeKnown={Boolean(revealedCode)}
-                    value={playerCodeInput}
-                    disabled={busy}
-                    onChange={setPlayerCodeInput}
-                    onDefuse={handleDefuse}
-                  />
                 </div>
               ) : null}
 
