@@ -23,6 +23,7 @@ interface EvaluateInput {
   suspicion: number;
   history: HistoryItem[];
   round: number;
+  stage: number;
   level: LevelId;
   playerEmotion: PlayerEmotion | null;
   emotionScore: number | null;
@@ -42,6 +43,10 @@ interface EvaluateOutput {
   revealCode: boolean;
   code: string | null;
   npcMood: NpcMood;
+  stage: number;
+  nextStage: number;
+  passStage: boolean;
+  failureReason: string | null;
 }
 
 const MODEL = DEFAULT_MISTRAL_MODEL;
@@ -54,6 +59,16 @@ const PLAYER_EMOTIONS: PlayerEmotion[] = [
   "sad",
   "surprise"
 ];
+
+const FINAL_STAGE = 5;
+const MAX_TIME_SECONDS = 60;
+const LEVEL1_STAGE_OBJECTIVES: Record<number, string> = {
+  1: "Establish credible identity and mission in one confident line.",
+  2: "Show concrete situational awareness (timer pressure + urgency).",
+  3: "Apply structured pressure with a coherent ask, no rambling.",
+  4: "Corner the NPC with consistent dominance and clear consequences.",
+  5: "Final extraction: force immediate 4-digit defuse code disclosure."
+};
 
 const THREAT_PATTERNS = [
   /\bor else\b/i,
@@ -166,7 +181,11 @@ Output MUST be strict JSON only with this exact schema:
   "shouldHangUp": boolean,
   "revealCode": boolean,
   "code": string | null,
-  "npcMood": "calm" | "suspicious" | "hostile"
+  "npcMood": "calm" | "suspicious" | "hostile",
+  "stage": number,
+  "nextStage": number,
+  "passStage": boolean,
+  "failureReason": string | null
 }
 
 Global rules:
@@ -176,6 +195,11 @@ Global rules:
 - newSuspicion must be 0..100.
 - npcReply must be short, in-character, phone-call style, max 22 words.
 - Keep npcReply varied, story-driven, and slightly darkly witty.
+- For level 1, progression is STRICT 5 stages. Never skip stages.
+- If the player's line fails the current stage objective or is nonsense/off-topic, set:
+  passStage=false, nextStage=stage, revealCode=false, code=null.
+- On failed stage, npcReply must mock the player briefly and force a retry (no instant detonation).
+- Only if stage 5 is passed can revealCode be true.
 - Never include markdown, explanations, code fences, or extra keys.
 - Respect level persona and reveal condition from the user payload.
 `.trim();
@@ -219,19 +243,15 @@ function generateCode() {
 }
 
 function safeFallback(input: EvaluateInput): EvaluateOutput {
-  const suspicionDelta = input.level === 2 ? 2 : 4;
+  const suspicionDelta = input.level === 2 ? 2 : 3;
   const newSuspicion = clamp(input.suspicion + suspicionDelta, 0, 100);
-  const shouldHangUp = newSuspicion >= 88;
+  const shouldHangUp = false;
 
   return {
     npcReply:
       input.level === 2
-        ? shouldHangUp
-          ? "Hiss! Bye."
-          : "Mrrp... unclear. Be gentle and clear."
-        : shouldHangUp
-          ? "Enough. This call is over."
-          : "I need clearer answers. You're making me doubt you.",
+        ? "Mrrp... signal glitch. Say it again clearly."
+        : "Line glitch. Repeat your line, sharper.",
     scores: {
       persuasion: 4,
       confidence: 4,
@@ -243,7 +263,11 @@ function safeFallback(input: EvaluateInput): EvaluateOutput {
     shouldHangUp,
     revealCode: false,
     code: null,
-    npcMood: moodFromSuspicion(newSuspicion)
+    npcMood: moodFromSuspicion(newSuspicion),
+    stage: clamp(input.stage, 1, FINAL_STAGE),
+    nextStage: clamp(input.stage, 1, FINAL_STAGE),
+    passStage: false,
+    failureReason: null
   };
 }
 
@@ -309,6 +333,14 @@ function normalizeOutput(parsed: Record<string, unknown>, input: EvaluateInput):
       ? parsed.npcMood
       : moodFromSuspicion(newSuspicion);
 
+  const stage = toInt(parsed.stage, input.stage, 1, FINAL_STAGE);
+  const nextStage = toInt(parsed.nextStage, stage, 1, FINAL_STAGE);
+  const passStage = Boolean(parsed.passStage);
+  const failureReason =
+    typeof parsed.failureReason === "string" && parsed.failureReason.trim().length > 0
+      ? parsed.failureReason.trim().slice(0, 140)
+      : null;
+
   let npcReply =
     typeof parsed.npcReply === "string" && parsed.npcReply.trim().length > 0
       ? parsed.npcReply.trim().slice(0, 220)
@@ -329,22 +361,16 @@ function normalizeOutput(parsed: Record<string, unknown>, input: EvaluateInput):
     shouldHangUp,
     revealCode,
     code,
-    npcMood
+    npcMood,
+    stage,
+    nextStage,
+    passStage,
+    failureReason
   };
 }
 
 function hasPattern(text: string, patterns: RegExp[]) {
   return patterns.some((pattern) => pattern.test(text));
-}
-
-function looksLikeYelling(text: string) {
-  const exclamationCount = (text.match(/!/g) ?? []).length;
-  const letters = text.replace(/[^a-zA-Z]/g, "");
-  const upper = letters.replace(/[^A-Z]/g, "");
-  const upperRatio = letters.length > 0 ? upper.length / letters.length : 0;
-  const shoutKeyword = /\b(shout|scream|yell|hurle|crie|now|right now)\b/i.test(text);
-
-  return shoutKeyword || exclamationCount >= 2 || (letters.length >= 8 && upperRatio >= 0.45);
 }
 
 function applyEmotionShift(
@@ -363,6 +389,66 @@ function applyEmotionShift(
   output.newSuspicion = clamp(output.newSuspicion + shift, 0, 100);
 }
 
+function applyLevelOneFiveStepGate(base: EvaluateOutput, input: EvaluateInput): EvaluateOutput {
+  const currentStage = clamp(input.stage, 1, FINAL_STAGE);
+  const output: EvaluateOutput = {
+    ...base,
+    stage: currentStage,
+    nextStage: currentStage
+  };
+
+  const transcriptLower = input.transcript.toLowerCase();
+  const tooShort = input.transcript.trim().length < 8;
+  const nonsenseLike =
+    /(blah|lol|test|idk|je sais pas|random|whatever|aaaa+|eeee+|hmm+|uhh+)/i.test(transcriptLower) ||
+    tooShort;
+
+  const stagePass = Boolean(output.passStage) && !nonsenseLike;
+
+  if (!stagePass) {
+    const reason = output.failureReason ?? `Stage ${currentStage} failed`;
+    output.passStage = false;
+    output.nextStage = currentStage;
+    output.shouldHangUp = false;
+    output.revealCode = false;
+    output.code = null;
+    output.failureReason = reason;
+    output.npcMood = "hostile";
+    output.newSuspicion = clamp(Math.max(output.newSuspicion, input.suspicion + 10), 0, 100);
+    output.suspicionDelta = clamp(output.newSuspicion - input.suspicion, -20, 20);
+
+    if (nonsenseLike) {
+      output.npcReply = "N'importe quoi. T'avanceras jamais comme ca. Same stage. Time's up soon.";
+      output.failureReason = "Nonsense input";
+    } else {
+      output.npcReply = `Stage ${currentStage} rate. Meme etape. T'avanceras jamais comme ca. Time's up soon.`;
+    }
+    return output;
+  }
+
+  output.passStage = true;
+  output.failureReason = null;
+  output.shouldHangUp = false;
+
+  if (currentStage < FINAL_STAGE) {
+    output.nextStage = currentStage + 1;
+    output.revealCode = false;
+    output.code = null;
+    output.npcMood = output.newSuspicion >= 68 ? "suspicious" : "calm";
+  } else {
+    output.nextStage = FINAL_STAGE;
+    output.revealCode = true;
+    output.code = output.code ?? generateCode();
+    output.npcMood = "hostile";
+    if (!output.npcReply.includes(output.code)) {
+      output.npcReply = `${output.npcReply} Defuse code: ${output.code}.`;
+    }
+  }
+
+  output.suspicionDelta = clamp(output.newSuspicion - input.suspicion, -20, 20);
+  return output;
+}
+
 function applyLevelRules(base: EvaluateOutput, input: EvaluateInput): EvaluateOutput {
   const rules = LEVEL_RULES[input.level];
   const playerCorpus = [
@@ -375,40 +461,12 @@ function applyLevelRules(base: EvaluateOutput, input: EvaluateInput): EvaluateOu
   const threatIntent = hasPattern(playerCorpus, THREAT_PATTERNS);
   const petIntent = hasPattern(playerCorpus, PET_PATTERNS);
   const emotion = input.playerEmotion;
-  const emotionConfidence = input.emotionScore ?? 0.5;
 
   const output: EvaluateOutput = { ...base };
   applyEmotionShift(output, input, rules.emotionShift);
 
   if (input.level === 1) {
-    output.revealCode = false;
-    output.code = null;
-
-    const yellingPressure = looksLikeYelling(input.transcript);
-    const angerPressure =
-      threatIntent || yellingPressure || (emotion === "angry" && emotionConfidence >= 0.35);
-    const fearSignal = emotion === "fear" && emotionConfidence >= 0.35;
-
-    if (angerPressure && input.round >= rules.revealMinRound) {
-      output.revealCode = true;
-      output.code = output.code ?? generateCode();
-      output.shouldHangUp = false;
-      output.npcMood = "hostile";
-      output.newSuspicion = clamp(Math.min(output.newSuspicion, rules.revealSuspicionCap), 0, 100);
-      output.npcReply = `Fine! Stop yelling. Defuse code: ${output.code}.`;
-    } else if (fearSignal) {
-      output.newSuspicion = clamp(output.newSuspicion + 4, 0, 100);
-      output.npcMood = "hostile";
-      output.shouldHangUp = output.newSuspicion >= 92;
-      output.npcReply = output.shouldHangUp
-        ? "You're panicking. I'm done. Click."
-        : "You sound scared. Fear makes you less believable.";
-    } else if (output.newSuspicion >= rules.forcedHangupSuspicion) {
-      output.shouldHangUp = true;
-      output.npcReply = "No. I'm done talking. Click.";
-    } else if (!output.shouldHangUp && output.npcReply.trim().length < 6) {
-      output.npcReply = "Talk fast. I'm losing patience.";
-    }
+    return applyLevelOneFiveStepGate(output, input);
   }
 
   if (input.level === 2) {
@@ -472,6 +530,7 @@ function sanitizeInput(body: Record<string, unknown>): EvaluateInput | null {
   const timeRemaining = Number(body.timeRemaining);
   const suspicion = Number(body.suspicion);
   const round = Number(body.round);
+  const stageRaw = Number(body.stage);
   const playerEmotion = parsePlayerEmotion(body.playerEmotion);
   const emotionScore = toFloat(body.emotionScore, null, 0, 1);
   const levelRaw = Number(body.level);
@@ -495,10 +554,15 @@ function sanitizeInput(body: Record<string, unknown>): EvaluateInput | null {
 
   return {
     transcript: transcript.slice(0, 400),
-    timeRemaining: clamp(Math.round(timeRemaining), 0, 120),
+    timeRemaining: clamp(Math.round(timeRemaining), 0, MAX_TIME_SECONDS),
     suspicion: clamp(Math.round(suspicion), 0, 100),
     history: history.slice(-12),
     round: clamp(Math.round(round), 1, 25),
+    stage: clamp(
+      Math.min(Math.round(Number.isFinite(stageRaw) ? stageRaw : 1), clamp(Math.round(round), 1, 25)),
+      1,
+      FINAL_STAGE
+    ),
     level,
     playerEmotion,
     emotionScore
@@ -522,7 +586,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         error:
-          "Invalid payload. Check transcript/timeRemaining/suspicion/history/round/level/playerEmotion."
+          "Invalid payload. Check transcript/timeRemaining/suspicion/history/round/stage/level/playerEmotion."
       },
       { status: 400 }
     );
@@ -531,6 +595,7 @@ export async function POST(request: NextRequest) {
   console.info("🎭  [Evaluate] Incoming turn", {
     level: input.level,
     round: input.round,
+    stage: input.stage,
     timeRemaining: input.timeRemaining,
     suspicion: input.suspicion,
     playerEmotion: input.playerEmotion,
@@ -554,6 +619,12 @@ export async function POST(request: NextRequest) {
         suspicion: input.suspicion,
         history: input.history,
         round: input.round,
+        stage: input.stage,
+        stageObjective:
+          input.level === 1
+            ? LEVEL1_STAGE_OBJECTIVES[input.stage] ?? LEVEL1_STAGE_OBJECTIVES[FINAL_STAGE]
+            : null,
+        minStagesRequired: input.level === 1 ? FINAL_STAGE : null,
         playerEmotion: input.playerEmotion,
         emotionScore: input.emotionScore,
         emotionGuidance: context.emotionGuidance
@@ -566,13 +637,13 @@ export async function POST(request: NextRequest) {
     modelRaw = await createMistralChatCompletion(messages, MODEL);
   } catch (error) {
     console.error("🚨  [Evaluate] Mistral call failed", error);
-    return NextResponse.json(applyLevelRules(safeFallback(input), input), { status: 200 });
+    return NextResponse.json(safeFallback(input), { status: 200 });
   }
 
   const parsed = parseModelJson(modelRaw);
   if (!parsed) {
     console.warn("⚠️  [Evaluate] JSON parse fallback triggered");
-    return NextResponse.json(applyLevelRules(safeFallback(input), input), { status: 200 });
+    return NextResponse.json(safeFallback(input), { status: 200 });
   }
 
   const normalized = normalizeOutput(parsed, input);

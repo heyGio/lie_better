@@ -49,9 +49,11 @@ export async function POST(request: Request) {
       file: audio,
       language
     });
+    let emotionError: string | null = null;
     const emotionPromise = analyzeEmotion
       ? classifySpeechEmotion(audio).catch((error) => {
-          console.warn("⚠️  [Emotion] Speech emotion analysis skipped", error);
+          emotionError = error instanceof Error ? error.message : "Unknown emotion analysis error";
+          console.warn("⚠️  [Emotion] Speech emotion analysis skipped", { emotionError });
           return null;
         })
       : Promise.resolve(null);
@@ -64,7 +66,10 @@ export async function POST(request: Request) {
         language: transcription.language,
         emotion: emotion?.label ?? null,
         emotionScore: typeof emotion?.score === "number" ? Number(emotion.score.toFixed(4)) : null,
-        emotionScores: emotion?.scores ?? null
+        emotionScores: emotion?.scores ?? null,
+        emotionModel: emotion?.model ?? null,
+        emotionSource: emotion ? "huggingface" : null,
+        emotionError
       },
       { status: 200 }
     );

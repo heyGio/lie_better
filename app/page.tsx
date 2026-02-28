@@ -18,6 +18,9 @@ interface TranscribeResponse {
   emotion?: PlayerEmotion | null;
   emotionScore?: number | null;
   emotionScores?: Partial<Record<PlayerEmotion, number>> | null;
+  emotionModel?: string | null;
+  emotionSource?: "huggingface" | null;
+  emotionError?: string | null;
   error?: string;
 }
 
@@ -26,6 +29,9 @@ interface TranscriptionResult {
   emotion: PlayerEmotion | null;
   emotionScore: number | null;
   emotionScores: EmotionScores | null;
+  emotionModel: string | null;
+  emotionSource: "huggingface" | null;
+  emotionError: string | null;
 }
 
 interface EvaluateResponse {
@@ -42,16 +48,21 @@ interface EvaluateResponse {
   revealCode: boolean;
   code: string | null;
   npcMood: NpcMood;
+  stage?: number;
+  nextStage?: number;
+  passStage?: boolean;
+  failureReason?: string | null;
 }
 
-const START_TIME = 120;
+const START_TIME = 60;
 const START_SUSPICION = 50;
-const OPENING_LINE = "Who is this? You have 2 minutes. Talk.";
+const OPENING_LINE = "Who is this? You have 60 seconds. Talk.";
 const DARKEN_DELAY_MS = 180;
 const OPENING_LINE_DELAY_MS = 980;
 const TALK_READY_DELAY_MS = 1720;
+const BOMB_TIMER_APPEAR_DELAY_MS = 2000;
 const INTRO_TITLE = "Lie Better";
-const INTRO_PROMPT = "Press Enter to Continue...";
+const INTRO_PROMPT = "press enter....";
 
 const PLAYER_EMOTIONS: PlayerEmotion[] = [
   "angry",
@@ -178,6 +189,7 @@ export default function Home() {
 
   const [suspicion, setSuspicion] = useState(START_SUSPICION);
   const [npcMood, setNpcMood] = useState<NpcMood>("suspicious");
+  const [stage, setStage] = useState(1);
 
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [lastTranscript, setLastTranscript] = useState("");
@@ -196,7 +208,10 @@ export default function Home() {
   const [playerCodeInput, setPlayerCodeInput] = useState("");
   const [won, setWon] = useState(false);
   const [exploded, setExploded] = useState(false);
-  const [explodeReason, setExplodeReason] = useState("");
+  const [explosionFlashVisible, setExplosionFlashVisible] = useState(false);
+  const [destroyedBackgroundVisible, setDestroyedBackgroundVisible] = useState(false);
+  const [isSceneShaking, setIsSceneShaking] = useState(false);
+  const [isBombTimerVisible, setIsBombTimerVisible] = useState(false);
 
   const [statusLine, setStatusLine] = useState("Awaiting call start...");
 
@@ -204,6 +219,7 @@ export default function Home() {
 
   const historyRef = useRef<HistoryItem[]>([]);
   const npcAudioRef = useRef<HTMLAudioElement | null>(null);
+  const explosionAudioRef = useRef<HTMLAudioElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -215,6 +231,7 @@ export default function Home() {
   const darkenTimeoutRef = useRef<number | null>(null);
   const openingLineTimeoutRef = useRef<number | null>(null);
   const talkReadyTimeoutRef = useRef<number | null>(null);
+  const bombTimerRevealTimeoutRef = useRef<number | null>(null);
 
   const replaceHistory = useCallback((next: HistoryItem[]) => {
     historyRef.current = next;
@@ -251,6 +268,49 @@ export default function Home() {
     npcAudioRef.current = null;
     setIsNpcSpeaking(false);
   }, []);
+
+  const stopExplosionSound = useCallback(() => {
+    const audio = explosionAudioRef.current;
+    if (!audio) return;
+
+    audio.onended = null;
+    audio.onerror = null;
+    audio.pause();
+    audio.currentTime = 0;
+    explosionAudioRef.current = null;
+  }, []);
+
+  const playExplosionSound = useCallback(async () => {
+    stopExplosionSound();
+    const audio = new Audio("/assets/explosion_earrape.mp3");
+    audio.preload = "auto";
+    audio.volume = 1;
+    audio.currentTime = 0;
+    explosionAudioRef.current = audio;
+
+    audio.onended = () => {
+      if (explosionAudioRef.current === audio) {
+        explosionAudioRef.current = null;
+      }
+    };
+
+    audio.onerror = (event) => {
+      if (explosionAudioRef.current === audio) {
+        explosionAudioRef.current = null;
+      }
+      console.error("🚨  [SFX] Explosion sound playback failed", event);
+    };
+
+    try {
+      await audio.play();
+      console.info("💥🔊  [SFX] Explosion sound played at max volume");
+    } catch (error) {
+      if (explosionAudioRef.current === audio) {
+        explosionAudioRef.current = null;
+      }
+      console.error("🚨  [SFX] Browser blocked explosion sound playback", error);
+    }
+  }, [stopExplosionSound]);
 
   const speakNpcLine = useCallback(
     async (text: string, mood: NpcMood, suspicionLevel: number) => {
@@ -340,7 +400,6 @@ export default function Home() {
       stopRecording(true);
       stopNpcVoice();
       setExploded(true);
-      setExplodeReason(reason);
       setTimerRunning(false);
       setCanTalk(false);
       setStatusLine(`BOOM · ${reason}`);
@@ -379,7 +438,10 @@ export default function Home() {
       transcript,
       emotion: payload.emotion ?? null,
       emotionScore: typeof payload.emotionScore === "number" ? payload.emotionScore : null,
-      emotionScores: parseEmotionScores(payload.emotionScores)
+      emotionScores: parseEmotionScores(payload.emotionScores),
+      emotionModel: typeof payload.emotionModel === "string" ? payload.emotionModel : null,
+      emotionSource: payload.emotionSource === "huggingface" ? "huggingface" : null,
+      emotionError: typeof payload.emotionError === "string" ? payload.emotionError : null
     };
   }, []);
 
@@ -411,6 +473,7 @@ export default function Home() {
         emotionScores,
         timeRemaining,
         suspicion,
+        stage,
         round,
         conversation: withPlayer
       });
@@ -425,6 +488,7 @@ export default function Home() {
             suspicion,
             history: withPlayer,
             round,
+            stage,
             level: 1,
             playerEmotion: emotion,
             emotionScore
@@ -443,6 +507,9 @@ export default function Home() {
 
         setSuspicion(clamp(data.newSuspicion, 0, 100));
         setNpcMood(data.npcMood);
+        if (typeof data.nextStage === "number" && Number.isFinite(data.nextStage)) {
+          setStage(clamp(Math.round(data.nextStage), 1, 5));
+        }
 
         console.info("🎭  [Turn] NPC evaluation", {
           npcReply: data.npcReply,
@@ -453,21 +520,28 @@ export default function Home() {
           revealCode: data.revealCode,
           code: data.code,
           npcMood: data.npcMood,
+          stage: data.stage,
+          nextStage: data.nextStage,
+          passStage: data.passStage,
+          failureReason: data.failureReason,
           conversation: withNpc
         });
 
         if (data.revealCode && data.code) {
           setRevealedCode(data.code);
           setStatusLine("Code leaked. Enter it on the bomb panel.");
+        } else if (data.shouldHangUp) {
+          setStatusLine("Caller mocks you. Keep trying before the timer hits zero.");
         } else {
-          setStatusLine(data.shouldHangUp ? "Call ended. Try the bomb panel." : "Line open. Hold Space when ready.");
+          const nextStage = typeof data.nextStage === "number" ? clamp(Math.round(data.nextStage), 1, 5) : stage;
+          setStatusLine(`Stage ${nextStage}/5. Hold Space when ready.`);
         }
 
         void speakNpcLine(data.npcReply, data.npcMood, data.newSuspicion);
 
         if (data.shouldHangUp) {
-          setCanTalk(false);
-          console.warn("📴  [Call] Target ended the call");
+          const reason = data.failureReason?.trim() || "Failed dialogue stage";
+          console.warn("📴  [Call] Stage failed; no instant explosion mode active", { reason });
         }
       } catch (error) {
         console.error("🚨  [Turn] Evaluation error", error);
@@ -476,7 +550,7 @@ export default function Home() {
         setLoading(false);
       }
     },
-    [exploded, replaceHistory, speakNpcLine, suspicion, timeRemaining, timerRunning, won]
+    [exploded, replaceHistory, speakNpcLine, stage, suspicion, timeRemaining, timerRunning, won]
   );
 
   const handlePressStart = useCallback(async () => {
@@ -557,17 +631,35 @@ export default function Home() {
           const result = await transcribeBlob(audioBlob);
           if (recordingSessionRef.current !== sessionId) return;
 
-          const fallback = inferEmotionFromTranscript(result.transcript);
+          const shouldUseTextFallback = !result.emotion && !result.emotionError;
+          const fallback = shouldUseTextFallback
+            ? inferEmotionFromTranscript(result.transcript)
+            : { emotion: null, score: null, scores: null };
           const finalEmotion = result.emotion ?? fallback.emotion;
           const finalEmotionScore = result.emotionScore ?? fallback.score;
           const finalEmotionScores = result.emotionScores ?? fallback.scores;
+          const emotionSource = result.emotion
+            ? "huggingface"
+            : shouldUseTextFallback
+              ? "fallback-text"
+              : "none";
+
+          if (!result.emotion && result.emotionError) {
+            const friendlyError = "Emotion model unavailable. Check HF token/config on server.";
+            setMicError(friendlyError);
+            console.warn("⚠️  [Emotion] Hugging Face unavailable, skipping transcript fallback", {
+              emotionError: result.emotionError
+            });
+          }
 
           console.info("🧠  [Emotion] Voice analysis", {
             transcript: result.transcript,
             emotion: finalEmotion,
             emotionScore: finalEmotionScore,
             emotionScores: finalEmotionScores,
-            source: result.emotion ? "huggingface" : "fallback-text"
+            source: emotionSource,
+            model: result.emotionModel,
+            error: result.emotionError
           });
 
           await submitTurn(result.transcript, finalEmotion, finalEmotionScore, finalEmotionScores);
@@ -613,10 +705,36 @@ export default function Home() {
     setStatusLine("Processing your message...");
   }, [isRecording, stopRecording]);
 
-  const handleCodeSubmit = useCallback(() => {
+  const playCodeClick = useCallback(() => {
+    if (typeof window === "undefined" || typeof window.AudioContext === "undefined") return;
+
+    try {
+      const ctx = new window.AudioContext();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = "square";
+      osc.frequency.setValueAtTime(1650, ctx.currentTime);
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.22, ctx.currentTime + 0.004);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.04);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.045);
+      window.setTimeout(() => {
+        void ctx.close();
+      }, 120);
+    } catch (error) {
+      console.warn("⚠️  [Bomb] Code click sound failed", error);
+    }
+  }, []);
+
+  const handleCodeSubmit = useCallback((overrideCode?: string) => {
     if (won || exploded) return;
 
-    const attemptedCode = playerCodeInput.trim();
+    const attemptedCode = (overrideCode ?? playerCodeInput).trim();
     console.info("🧨  [Bomb] Code attempt", {
       attemptedCode,
       expectedCode: revealedCode,
@@ -632,8 +750,9 @@ export default function Home() {
       return;
     }
 
-    triggerExplosion("Wrong code entered");
-  }, [exploded, playerCodeInput, revealedCode, timeRemaining, triggerExplosion, won]);
+    setStatusLine("Wrong code. Try again before timer ends.");
+    console.warn("⚠️  [Bomb] Wrong code, no instant explosion (timer remains the only fail condition).");
+  }, [exploded, playerCodeInput, revealedCode, timeRemaining, won]);
 
   const clearIntroSequenceTimers = useCallback(() => {
     if (darkenTimeoutRef.current !== null) {
@@ -648,14 +767,40 @@ export default function Home() {
       window.clearTimeout(talkReadyTimeoutRef.current);
       talkReadyTimeoutRef.current = null;
     }
+    if (bombTimerRevealTimeoutRef.current !== null) {
+      window.clearTimeout(bombTimerRevealTimeoutRef.current);
+      bombTimerRevealTimeoutRef.current = null;
+    }
   }, []);
 
-  const startGameSequence = useCallback(() => {
-    if (hasStarted) return;
+  const startGameSequence = useCallback((forceRestart: boolean = false) => {
+    if (hasStarted && !forceRestart) return;
 
     void unlockAudioPlayback();
     clearIntroSequenceTimers();
+    stopRecording(true);
     stopNpcVoice();
+    stopExplosionSound();
+
+    setWon(false);
+    setExploded(false);
+    setExplosionFlashVisible(false);
+    setDestroyedBackgroundVisible(false);
+    setIsSceneShaking(false);
+    setIsBombTimerVisible(false);
+    setRevealedCode(null);
+    setPlayerCodeInput("");
+    setSuspicion(START_SUSPICION);
+    setNpcMood("suspicious");
+    setStage(1);
+    setLastTranscript("");
+    setLastEmotion(null);
+    setLastEmotionScore(null);
+    setLastEmotionScores(null);
+    setIsRecording(false);
+    setIsTranscribing(false);
+    setLoading(false);
+
     replaceHistory([]);
     setHasStarted(true);
     setShowCharacter(false);
@@ -672,6 +817,10 @@ export default function Home() {
       setShowCharacter(true);
     }, DARKEN_DELAY_MS);
 
+    bombTimerRevealTimeoutRef.current = window.setTimeout(() => {
+      setIsBombTimerVisible(true);
+    }, BOMB_TIMER_APPEAR_DELAY_MS);
+
     openingLineTimeoutRef.current = window.setTimeout(() => {
       setShowOpeningLine(true);
       replaceHistory([{ role: "npc", content: OPENING_LINE }]);
@@ -686,7 +835,21 @@ export default function Home() {
       setStatusLine("Hold Space to respond");
       console.info("⌨️  [Intro] Space hold-to-talk enabled");
     }, TALK_READY_DELAY_MS);
-  }, [clearIntroSequenceTimers, hasStarted, replaceHistory, speakNpcLine, stopNpcVoice, unlockAudioPlayback]);
+  }, [
+    clearIntroSequenceTimers,
+    hasStarted,
+    replaceHistory,
+    speakNpcLine,
+    stopExplosionSound,
+    stopNpcVoice,
+    stopRecording,
+    unlockAudioPlayback
+  ]);
+
+  const handleRetry = useCallback(() => {
+    console.info("🔁  [Game] Retry requested");
+    startGameSequence(true);
+  }, [startGameSequence]);
 
   useEffect(() => {
     historyRef.current = history;
@@ -733,13 +896,37 @@ export default function Home() {
   }, [hasStarted, startGameSequence]);
 
   useEffect(() => {
+    if (!exploded) return;
+
+    const onEnterRetry = (event: KeyboardEvent) => {
+      if (event.code !== "Enter") return;
+      if (shouldIgnoreSpaceHotkey(event.target)) return;
+      event.preventDefault();
+      handleRetry();
+    };
+
+    window.addEventListener("keydown", onEnterRetry);
+
+    return () => {
+      window.removeEventListener("keydown", onEnterRetry);
+    };
+  }, [exploded, handleRetry]);
+
+  useEffect(() => {
     if (!hasStarted || !canTalk || exploded || won) return;
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (!isSpaceKey(event)) return;
-      if (shouldIgnoreSpaceHotkey(event.target)) return;
-
       event.preventDefault();
+
+      // Fallback for environments where keyup is swallowed (e.g. remote desktop):
+      // a new non-repeated space press while recording force-stops recording.
+      if (!event.repeat && spacePttActiveRef.current && isRecording) {
+        spacePttActiveRef.current = false;
+        handlePressEnd();
+        return;
+      }
+
       if (event.repeat || spacePttActiveRef.current) return;
 
       spacePttActiveRef.current = true;
@@ -763,15 +950,19 @@ export default function Home() {
 
     window.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("keyup", onKeyUp, true);
+    document.addEventListener("keydown", onKeyDown, true);
+    document.addEventListener("keyup", onKeyUp, true);
     window.addEventListener("blur", onBlur);
 
     return () => {
       window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("keyup", onKeyUp, true);
+      document.removeEventListener("keydown", onKeyDown, true);
+      document.removeEventListener("keyup", onKeyUp, true);
       window.removeEventListener("blur", onBlur);
       spacePttActiveRef.current = false;
     };
-  }, [canTalk, exploded, handlePressEnd, handlePressStart, hasStarted, won]);
+  }, [canTalk, exploded, handlePressEnd, handlePressStart, hasStarted, isRecording, won]);
 
   useEffect(() => {
     if (!timerRunning || exploded || won) return;
@@ -793,6 +984,34 @@ export default function Home() {
   }, [exploded, timerRunning, triggerExplosion, won]);
 
   useEffect(() => {
+    if (!exploded) return;
+
+    void unlockAudioPlayback();
+    void playExplosionSound();
+    setIsSceneShaking(true);
+    setExplosionFlashVisible(true);
+    setDestroyedBackgroundVisible(false);
+
+    const hideFlash = window.setTimeout(() => {
+      setExplosionFlashVisible(false);
+    }, 230);
+
+    const showDestroyed = window.setTimeout(() => {
+      setDestroyedBackgroundVisible(true);
+    }, 260);
+
+    const stopShake = window.setTimeout(() => {
+      setIsSceneShaking(false);
+    }, 950);
+
+    return () => {
+      window.clearTimeout(hideFlash);
+      window.clearTimeout(showDestroyed);
+      window.clearTimeout(stopShake);
+    };
+  }, [exploded, playExplosionSound, unlockAudioPlayback]);
+
+  useEffect(() => {
     if (!won) return;
     stopNpcVoice();
   }, [stopNpcVoice, won]);
@@ -802,9 +1021,10 @@ export default function Home() {
       clearIntroSequenceTimers();
       stopRecording(true);
       stopNpcVoice();
+      stopExplosionSound();
       releaseMicrophone();
     };
-  }, [clearIntroSequenceTimers, releaseMicrophone, stopNpcVoice, stopRecording]);
+  }, [clearIntroSequenceTimers, releaseMicrophone, stopExplosionSound, stopNpcVoice, stopRecording]);
 
   const latestNpcLine = useMemo(() => {
     for (let i = history.length - 1; i >= 0; i -= 1) {
@@ -812,6 +1032,12 @@ export default function Home() {
     }
     return OPENING_LINE;
   }, [history]);
+
+  const characterImageSrc = useMemo(() => {
+    if (revealedCode) return "/assets/defeat.png";
+    const playerTurns = history.filter((line) => line.role === "player").length;
+    return playerTurns >= 2 ? "/assets/angrycat.png" : "/assets/cat2.png";
+  }, [history, revealedCode]);
 
   const topEmotionDetail = useMemo(() => {
     if (!lastEmotionScores) return null;
@@ -824,70 +1050,100 @@ export default function Home() {
   }, [lastEmotionScores]);
 
   return (
-    <main className="relative h-screen w-screen overflow-hidden select-none">
+    <main className={`relative h-screen w-screen overflow-hidden select-none ${isSceneShaking ? "explode-shake" : ""}`}>
       <div
         className={`pointer-events-none absolute inset-0 bg-black transition-opacity duration-[1400ms] ease-out ${
-          hasStarted ? "opacity-60" : "opacity-0"
+          hasStarted && !destroyedBackgroundVisible ? "opacity-60" : "opacity-0"
         }`}
       />
 
       {!hasStarted ? (
         <button
           type="button"
-          onClick={startGameSequence}
+          onClick={() => startGameSequence()}
           className="absolute inset-0 z-30 flex items-center justify-center focus:outline-none"
           aria-label="Start game"
         >
-          <div className="pointer-events-none flex flex-col items-center gap-5 px-4 text-center">
-            <h1 className="rounded-2xl border border-cyan-200/70 bg-black/62 px-9 py-3 text-4xl font-black uppercase tracking-[0.24em] text-cyan-50 shadow-[0_0_28px_rgba(34,211,238,0.4)] md:text-6xl">
-              {INTRO_TITLE}
-            </h1>
-            <p className="rounded-xl border border-cyan-100/55 bg-black/62 px-7 py-2 text-sm font-semibold uppercase tracking-[0.3em] text-cyan-50 shadow-[0_0_14px_rgba(125,211,252,0.4)] md:text-lg">
-              {INTRO_PROMPT}
-            </p>
+          <div className="pointer-events-none relative overflow-hidden rounded-3xl border border-cyan-100/65 bg-black/88 px-7 py-6 text-center shadow-[0_0_75px_rgba(34,211,238,0.4)] backdrop-blur-[3px] md:px-12 md:py-9">
+            <div className="absolute inset-0 bg-gradient-to-b from-slate-950/55 via-black/70 to-black/85" />
+            <div className="relative z-10">
+              <h1 className="text-5xl font-black uppercase tracking-[0.24em] text-white drop-shadow-[0_0_26px_rgba(165,243,252,0.9)] md:text-7xl">
+                {INTRO_TITLE}
+              </h1>
+              <p className="mt-5 animate-pulse text-sm font-semibold tracking-[0.32em] text-white/90 md:text-lg">
+                {INTRO_PROMPT}
+              </p>
+            </div>
           </div>
         </button>
       ) : null}
 
-      {hasStarted ? (
+      {exploded ? (
         <>
-          {exploded ? (
-            <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center bg-red-950/78">
-              <div className="rounded-2xl border border-red-300/65 bg-red-500/15 px-8 py-6 text-center shadow-[0_0_45px_rgba(248,113,113,0.5)]">
-                <p className="text-4xl font-black uppercase tracking-[0.2em] text-red-200">BOOM</p>
-                <p className="mt-2 text-sm uppercase tracking-[0.12em] text-red-100">{explodeReason || "Device exploded"}</p>
-              </div>
+          {destroyedBackgroundVisible ? (
+            <div className="pointer-events-none absolute inset-0 z-[38]">
+              <Image
+                src="/assets/background_blowup.png"
+                alt="Devastated background"
+                fill
+                priority
+                sizes="100vw"
+                className="object-cover"
+              />
             </div>
           ) : null}
 
+          {explosionFlashVisible ? <div className="pointer-events-none absolute inset-0 z-[45] bg-white/95" /> : null}
+
+          {destroyedBackgroundVisible && !explosionFlashVisible ? (
+            <p className="pointer-events-none absolute bottom-7 left-1/2 z-[46] -translate-x-1/2 animate-pulse rounded-md border border-red-100/55 bg-black/58 px-4 py-1 text-xs font-semibold uppercase tracking-[0.22em] text-red-50 md:bottom-9 md:text-sm">
+              Press Enter to Retry
+            </p>
+          ) : null}
+        </>
+      ) : null}
+
+      {hasStarted && !exploded ? (
+        <>
           {won ? (
-            <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center bg-emerald-950/70">
+            <div className="absolute inset-0 z-40 flex items-center justify-center bg-emerald-950/70">
               <div className="rounded-2xl border border-emerald-300/65 bg-emerald-500/15 px-8 py-6 text-center shadow-[0_0_45px_rgba(74,222,128,0.45)]">
                 <p className="text-3xl font-black uppercase tracking-[0.18em] text-emerald-200">DEVICE DISARMED</p>
                 <p className="mt-2 text-sm uppercase tracking-[0.12em] text-emerald-100">Time left: {formatTime(timeRemaining)}</p>
+                <button
+                  type="button"
+                  onClick={handleRetry}
+                  className="mt-5 rounded-lg border border-emerald-200/80 bg-gradient-to-b from-emerald-200 to-emerald-700 px-6 py-2 text-sm font-black uppercase tracking-[0.18em] text-emerald-950 transition hover:brightness-110"
+                >
+                  Retry
+                </button>
               </div>
             </div>
           ) : null}
 
           <div className="pointer-events-none absolute left-4 top-4 rounded-lg border border-cyan-300/35 bg-slate-950/55 px-4 py-2 font-mono text-xl font-bold text-cyan-200 md:left-8 md:top-8 md:text-3xl">
-            Suspicion {suspicion} • {npcMood}
+            Suspicion {suspicion} • {npcMood} • Stage {stage}/5
             <p className="mt-1 text-[10px] font-medium uppercase tracking-[0.14em] text-cyan-100/80 md:text-xs">{statusLine}</p>
           </div>
 
-          <div className="absolute left-2 top-[56%] z-20 w-[40vw] max-w-[620px] min-w-[260px] -translate-y-1/2 px-1 md:left-6 md:w-[36vw] md:px-0">
+          <div className="absolute left-3 top-[58%] z-20 w-[32vw] max-w-[520px] min-w-[230px] -translate-y-1/2 px-1 md:left-7 md:w-[29vw] md:px-0">
             <div className="relative mx-auto aspect-[1365/768] w-full">
               <Image
                 src="/assets/bomb2.png"
                 alt="Defuse device"
                 fill
                 priority
-                sizes="(max-width: 768px) 40vw, 34vw"
+                sizes="(max-width: 768px) 32vw, 29vw"
                 className="object-contain drop-shadow-[0_0_30px_rgba(248,113,113,0.42)]"
               />
 
-              <div className="pointer-events-none absolute left-[33.6%] top-[27.2%] flex h-[18.8%] w-[32.8%] items-center justify-center rounded-md bg-black/45">
+              <div
+                className={`pointer-events-none absolute left-[31.2%] top-[31.8%] flex h-[19.2%] w-[33.4%] items-center justify-center transition-opacity duration-500 ${
+                  isBombTimerVisible ? "opacity-100" : "opacity-0"
+                }`}
+              >
                 <span
-                  className={`font-mono text-[clamp(1.05rem,2.7vw,2.65rem)] font-black tracking-[0.26em] text-red-400 drop-shadow-[0_0_14px_rgba(239,68,68,1)] ${
+                  className={`font-mono text-[clamp(1.02rem,2.5vw,2.45rem)] font-black tracking-[0.24em] text-red-500 drop-shadow-[0_0_18px_rgba(239,68,68,1)] ${
                     timeRemaining <= 30 ? "animate-pulse text-red-200" : ""
                   }`}
                 >
@@ -895,26 +1151,28 @@ export default function Home() {
                 </span>
               </div>
 
-              <div className="absolute left-[38.2%] top-[62.85%] h-[10.9%] w-[15.05%]">
+              <div className="absolute left-[38.35%] top-[62.45%] h-[10.9%] w-[14.9%]">
                 <input
                   value={playerCodeInput}
-                  onChange={(event) => setPlayerCodeInput(event.target.value.replace(/\D/g, "").slice(0, 4))}
+                  onChange={(event) => {
+                    const nextCode = event.target.value.replace(/\D/g, "").slice(0, 4);
+                    setPlayerCodeInput(nextCode);
+
+                    if (nextCode.length === 4 && !exploded && !won) {
+                      playCodeClick();
+                      setStatusLine("Verifying code...");
+                      window.setTimeout(() => {
+                        handleCodeSubmit(nextCode);
+                      }, 70);
+                    }
+                  }}
                   inputMode="numeric"
                   maxLength={4}
                   placeholder="0000"
                   disabled={exploded || won}
-                  className="h-full w-full rounded-[0.3rem] border border-slate-500/80 bg-[#d8d2b2]/95 px-1 text-center font-mono text-[clamp(0.58rem,1.25vw,1rem)] font-black tracking-[0.24em] text-slate-900 outline-none ring-red-500/70 transition focus:ring-2 disabled:opacity-60"
+                  className="h-full w-full rounded-[0.32rem] border border-[#8f8a73] bg-[#d7d0ad] px-[0.22rem] text-center font-mono text-[clamp(0.56rem,1.18vw,0.95rem)] font-black tracking-[0.2em] text-slate-800 shadow-[inset_0_0_10px_rgba(15,23,42,0.18)] outline-none ring-red-500/65 transition focus:ring-2 disabled:opacity-65"
                 />
               </div>
-
-              <button
-                type="button"
-                disabled={exploded || won || playerCodeInput.length !== 4}
-                onClick={handleCodeSubmit}
-                className="absolute left-[55.05%] top-[62.6%] h-[11.8%] w-[11.7%] rounded-[0.35rem] border border-red-200/70 bg-gradient-to-b from-red-200 to-red-700 px-1 text-[clamp(0.42rem,0.86vw,0.72rem)] font-black uppercase tracking-[0.1em] text-red-950 shadow-[0_0_12px_rgba(248,113,113,0.45)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:border-slate-500/45 disabled:bg-slate-700 disabled:text-slate-300"
-              >
-                Test
-              </button>
             </div>
           </div>
 
@@ -925,7 +1183,7 @@ export default function Home() {
               }`}
             >
               <Image
-                src="/assets/cat2.png"
+                src={characterImageSrc}
                 alt="Phone character"
                 fill
                 priority
@@ -946,7 +1204,7 @@ export default function Home() {
               </div>
 
               <div
-                className={`pointer-events-none absolute left-[-40%] top-[40%] rounded-lg border border-emerald-300/35 bg-emerald-500/10 px-3 py-2 text-xs uppercase tracking-[0.12em] text-emerald-200 transition-all duration-700 ${
+                className={`pointer-events-none absolute bottom-[2%] left-[-40%] rounded-lg border border-emerald-300/35 bg-emerald-500/10 px-3 py-2 text-xs uppercase tracking-[0.12em] text-emerald-200 transition-all duration-700 md:bottom-[3%] ${
                   canTalk ? "opacity-100" : "opacity-0"
                 }`}
               >

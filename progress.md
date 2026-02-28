@@ -75,3 +75,53 @@ Original prompt: Build and iterate a playable web game in this workspace, valida
   - relaxed page overflow behavior (`overflow-y: auto`)
   - reduced phone content density (`gap` + webcam aspect ratio + smaller conversation min-height on small screens)
 - Validated with lint/build and visual captures at desktop + mobile-like viewport.
+
+## 2026-02-28 - Emotion Pipeline Fix
+
+- Root cause found: local `.env` had no Hugging Face token variable (`HUGGINGFACE_API_TOKEN` / aliases), so `/api/transcribe` always fell back to transcript heuristic.
+- Extended Hugging Face token env alias support in `lib/huggingface.ts`:
+  - `HUGGING_FACE_API_TOKEN`, `HF_API_KEY`, `HUGGING_FACE_TOKEN`, `HUGGINGFACE`
+- Improved `/api/transcribe` response observability:
+  - now returns `emotionModel`, `emotionSource`, `emotionError`
+  - logs structured warning with `emotionError` when HF emotion analysis fails
+- Updated front-end (`app/page.tsx`) to:
+  - parse new emotion diagnostics fields
+  - stop silent transcript fallback when HF errors are explicit
+  - show user-friendly mic error for HF config/token issues
+  - log source/model/error in emotion trace for easy debugging
+- Updated README env docs with supported HF token aliases.
+- Validation: `npm run lint` and `npm run build` both pass.
+
+## 2026-02-28 - HF Router Migration Fix
+
+- Fixed Hugging Face endpoint migration in `lib/huggingface.ts`:
+  - default URL now uses `https://router.huggingface.co/hf-inference/models/<model>`
+  - auto-rewrites legacy `https://api-inference.huggingface.co/models/...` URLs if still configured
+- Added explicit error handling for:
+  - retired endpoint/deprecation responses (`410`, "no longer supported")
+  - model not deployed by inference providers (clear action: deploy dedicated Inference Endpoint + set `HF_EMOTION_API_URL`)
+- Updated env docs:
+  - `.env.example` now includes `HF_EMOTION_API_URL=`
+  - README documents optional dedicated endpoint override
+- Added clearer router-task/model unsupported error mapping (actionable message points to dedicated HF Inference Endpoint).
+- Validation: `npm run lint` and `npm run build` both pass after migration patch.
+
+## 2026-02-28 - HF 404 Clarification
+
+- Added explicit 404 mapping in `lib/huggingface.ts` for router model-not-found cases:
+  - now returns actionable error instructing to deploy dedicated Inference Endpoint and set `HF_EMOTION_API_URL`.
+- Verified lint still passes.
+
+## 2026-02-28 - Model Switch (User Requested)
+
+- Switched default speech emotion model to:
+  - `firdhokk/speech-emotion-recognition-with-openai-whisper-large-v3`
+- Improved env robustness:
+  - `HF_EMOTION_MODEL` now accepts either repo id (`owner/repo`) or full Hugging Face model URL.
+  - if `HF_EMOTION_API_URL` is mistakenly set to a Hugging Face model page URL, it is converted to router inference URL automatically.
+- Expanded emotion label normalization for this model's labels:
+  - `fearful -> fear`, `surprised -> surprise`, plus `happiness/sadness` aliases.
+- Updated docs:
+  - `.env.example` and README now point to the requested model by default.
+  - README notes this model may require dedicated `HF_EMOTION_API_URL` because public providers may return 404.
+- Validation: `npm run lint` and `npm run build` both pass.

@@ -499,3 +499,33 @@ body {
     transform: translate3d(-2px, 2px, 0);
   }
 }
+
+.explode-shake {
+  animation: explode-shake 180ms linear 6;
+}
+
+@keyframes explode-shake {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+
+  20% {
+    transform: translate3d(-9px, 6px, 0) rotate(-0.35deg);
+  }
+
+  40% {
+    transform: translate3d(10px, -7px, 0) rotate(0.3deg);
+  }
+
+  60% {
+    transform: translate3d(-7px, -6px, 0) rotate(-0.25deg);
+  }
+
+  80% {
+    transform: translate3d(8px, 5px, 0) rotate(0.22deg);
+  }
+
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+}

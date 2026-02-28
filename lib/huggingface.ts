@@ -1,9 +1,13 @@
-const DEFAULT_HF_EMOTION_MODEL =
-  process.env.HF_EMOTION_MODEL ?? "r-f/wav2vec-english-speech-emotion-recognition";
+const LEGACY_HF_INFERENCE_PREFIX = "https://api-inference.huggingface.co/models/";
+const ROUTER_HF_INFERENCE_PREFIX = "https://router.huggingface.co/hf-inference/models/";
+
+const DEFAULT_HF_EMOTION_MODEL_RAW =
+  process.env.HF_EMOTION_MODEL ?? "firdhokk/speech-emotion-recognition-with-openai-whisper-large-v3";
+const DEFAULT_HF_EMOTION_MODEL = normalizeEmotionModelId(DEFAULT_HF_EMOTION_MODEL_RAW);
 
 const DEFAULT_HF_EMOTION_URL =
   process.env.HF_EMOTION_API_URL ??
-  `https://api-inference.huggingface.co/models/${DEFAULT_HF_EMOTION_MODEL}`;
+  `${ROUTER_HF_INFERENCE_PREFIX}${DEFAULT_HF_EMOTION_MODEL}`;
 
 const EMOTIONS = ["angry", "disgust", "fear", "happy", "neutral", "sad", "surprise"] as const;
 
@@ -32,8 +36,12 @@ function isPrediction(value: unknown): value is HfEmotionPrediction {
 function getApiToken() {
   return (
     process.env.HUGGINGFACE_API_TOKEN ??
+    process.env.HUGGING_FACE_API_TOKEN ??
     process.env.HF_TOKEN ??
+    process.env.HF_API_KEY ??
     process.env.HUGGINGFACE_TOKEN ??
+    process.env.HUGGING_FACE_TOKEN ??
+    process.env.HUGGINGFACE ??
     ""
   );
 }
@@ -42,11 +50,54 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
+function normalizeEmotionModelId(raw: string) {
+  const trimmed = raw.trim();
+  if (!trimmed) return "firdhokk/speech-emotion-recognition-with-openai-whisper-large-v3";
+
+  if (trimmed.startsWith("https://huggingface.co/")) {
+    const withoutDomain = trimmed.replace("https://huggingface.co/", "");
+    const path = withoutDomain.split(/[?#]/)[0]?.replace(/^\/+|\/+$/g, "") ?? "";
+    const [owner, repo] = path.split("/");
+    if (owner && repo) return `${owner}/${repo}`;
+  }
+
+  if (trimmed.startsWith("http://huggingface.co/")) {
+    const withoutDomain = trimmed.replace("http://huggingface.co/", "");
+    const path = withoutDomain.split(/[?#]/)[0]?.replace(/^\/+|\/+$/g, "") ?? "";
+    const [owner, repo] = path.split("/");
+    if (owner && repo) return `${owner}/${repo}`;
+  }
+
+  return trimmed.replace(/^\/+|\/+$/g, "");
+}
+
+function normalizeEmotionApiUrl(url: string) {
+  const trimmed = url.trim();
+  if (!trimmed) return `${ROUTER_HF_INFERENCE_PREFIX}${DEFAULT_HF_EMOTION_MODEL}`;
+
+  // Hugging Face retired api-inference.huggingface.co in favor of router.huggingface.co.
+  if (trimmed.startsWith(LEGACY_HF_INFERENCE_PREFIX)) {
+    const model = trimmed.slice(LEGACY_HF_INFERENCE_PREFIX.length);
+    return `${ROUTER_HF_INFERENCE_PREFIX}${model || DEFAULT_HF_EMOTION_MODEL}`;
+  }
+
+  // Accept model page URL by converting it to the router inference URL.
+  if (trimmed.startsWith("https://huggingface.co/") || trimmed.startsWith("http://huggingface.co/")) {
+    const model = normalizeEmotionModelId(trimmed);
+    return `${ROUTER_HF_INFERENCE_PREFIX}${model || DEFAULT_HF_EMOTION_MODEL}`;
+  }
+
+  return trimmed;
+}
+
 function normalizeEmotionLabel(raw: string): PlayerEmotion | null {
   const value = raw.trim().toLowerCase();
   if ((EMOTIONS as readonly string[]).includes(value)) return value as PlayerEmotion;
 
   if (value === "anger") return "angry";
+  if (value === "fearful") return "fear";
+  if (value === "happiness") return "happy";
+  if (value === "sadness") return "sad";
   if (value === "surprised") return "surprise";
   return null;
 }
@@ -87,6 +138,7 @@ export async function classifySpeechEmotion(file: File): Promise<SpeechEmotionRe
   if (!token) {
     throw new Error("HUGGINGFACE_API_TOKEN (or HF_TOKEN) is missing.");
   }
+  const emotionApiUrl = normalizeEmotionApiUrl(DEFAULT_HF_EMOTION_URL);
 
   const audioBuffer = await file.arrayBuffer();
   if (!audioBuffer.byteLength) {
@@ -98,7 +150,7 @@ export async function classifySpeechEmotion(file: File): Promise<SpeechEmotionRe
 
   let response: Response;
   try {
-    response = await fetch(DEFAULT_HF_EMOTION_URL, {
+    response = await fetch(emotionApiUrl, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
@@ -120,7 +172,36 @@ export async function classifySpeechEmotion(file: File): Promise<SpeechEmotionRe
 
   if (!response.ok) {
     const details = await response.text().catch(() => "Unknown error");
-    throw new Error(`Hugging Face API error (${response.status}): ${details.slice(0, 300)}`);
+    const compactDetails = details.slice(0, 300);
+
+    if (
+      response.status === 410 ||
+      compactDetails.toLowerCase().includes("no longer supported") ||
+      compactDetails.toLowerCase().includes("router.huggingface.co")
+    ) {
+      throw new Error(
+        `Hugging Face endpoint retired. Use ${ROUTER_HF_INFERENCE_PREFIX}<model> or set HF_EMOTION_API_URL to your Inference Endpoint URL.`
+      );
+    }
+
+    if (response.status === 404 && emotionApiUrl.startsWith(ROUTER_HF_INFERENCE_PREFIX)) {
+      throw new Error(
+        `Model '${DEFAULT_HF_EMOTION_MODEL}' was not found on Hugging Face Router providers. Deploy a dedicated Inference Endpoint for this model and set HF_EMOTION_API_URL.`
+      );
+    }
+
+    if (
+      compactDetails.toLowerCase().includes("not supported by any inference provider") ||
+      compactDetails.toLowerCase().includes("model is not deployed by any inference provider") ||
+      (compactDetails.toLowerCase().includes("task") &&
+        compactDetails.toLowerCase().includes("not supported"))
+    ) {
+      throw new Error(
+        `Model '${DEFAULT_HF_EMOTION_MODEL}' is not deployed on Hugging Face Router. Deploy a dedicated Inference Endpoint for this model and set HF_EMOTION_API_URL.`
+      );
+    }
+
+    throw new Error(`Hugging Face API error (${response.status}): ${compactDetails}`);
   }
 
   const payload = (await response.json().catch(() => null)) as unknown;

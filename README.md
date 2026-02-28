@@ -47,7 +47,19 @@ ELEVENLABS_VOICE_ID=zYcjlYFOd3taleS0gkk3
 ELEVENLABS_OUTPUT_FORMAT=mp3_22050_32
 ELEVENLABS_OPTIMIZE_STREAMING_LATENCY=4
 HUGGINGFACE_API_TOKEN=YOUR_KEY_HERE
-HF_EMOTION_MODEL=r-f/wav2vec-english-speech-emotion-recognition
+HF_EMOTION_MODEL=firdhokk/speech-emotion-recognition-with-openai-whisper-large-v3
+# optional override (for dedicated HF Inference Endpoint):
+# HF_EMOTION_API_URL=https://<your-endpoint-host>/...
+```
+
+Note: `firdhokk/speech-emotion-recognition-with-openai-whisper-large-v3` is often not exposed by public HF Inference Providers; use a dedicated Inference Endpoint URL in `HF_EMOTION_API_URL` if router calls return 404.
+
+Hugging Face token aliases also accepted:
+
+```bash
+HF_API_KEY=YOUR_KEY_HERE
+HUGGING_FACE_API_TOKEN=YOUR_KEY_HERE
+HUGGINGFACE=YOUR_KEY_HERE
 ```
 
 ## Scripts
