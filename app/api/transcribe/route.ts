@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createMistralTranscription } from "@/lib/mistral";
+import { classifySpeechEmotion } from "@/lib/huggingface";
 
 export const runtime = "nodejs";
 
@@ -16,7 +17,11 @@ export async function POST(request: Request) {
 
   const audio = formData.get("audio");
   const languageRaw = formData.get("language");
+  const analyzeEmotionRaw = formData.get("analyzeEmotion");
   const language = typeof languageRaw === "string" ? languageRaw.trim().slice(0, 12) : undefined;
+  const analyzeEmotion =
+    typeof analyzeEmotionRaw === "string" &&
+    (analyzeEmotionRaw === "1" || analyzeEmotionRaw.toLowerCase() === "true");
 
   if (!(audio instanceof File)) {
     return NextResponse.json({ error: "Missing audio file in 'audio' field." }, { status: 400 });
@@ -35,19 +40,31 @@ export async function POST(request: Request) {
 
   console.info("🎙️  [Transcribe] Incoming audio", {
     bytes: audio.size,
-    type: audio.type || "unknown"
+    type: audio.type || "unknown",
+    analyzeEmotion
   });
 
   try {
-    const result = await createMistralTranscription({
+    const transcriptionPromise = createMistralTranscription({
       file: audio,
       language
     });
+    const emotionPromise = analyzeEmotion
+      ? classifySpeechEmotion(audio).catch((error) => {
+          console.warn("⚠️  [Emotion] Speech emotion analysis skipped", error);
+          return null;
+        })
+      : Promise.resolve(null);
+
+    const [transcription, emotion] = await Promise.all([transcriptionPromise, emotionPromise]);
 
     return NextResponse.json(
       {
-        transcript: result.text,
-        language: result.language
+        transcript: transcription.text,
+        language: transcription.language,
+        emotion: emotion?.label ?? null,
+        emotionScore: typeof emotion?.score === "number" ? Number(emotion.score.toFixed(4)) : null,
+        emotionScores: emotion?.scores ?? null
       },
       { status: 200 }
     );

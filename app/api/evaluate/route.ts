@@ -10,6 +10,7 @@ export const runtime = "nodejs";
 type ChatRole = "npc" | "player";
 type NpcMood = "calm" | "suspicious" | "hostile";
 type LevelId = 1 | 2;
+type PlayerEmotion = "angry" | "disgust" | "fear" | "happy" | "neutral" | "sad" | "surprise";
 
 interface HistoryItem {
   role: ChatRole;
@@ -23,6 +24,8 @@ interface EvaluateInput {
   history: HistoryItem[];
   round: number;
   level: LevelId;
+  playerEmotion: PlayerEmotion | null;
+  emotionScore: number | null;
 }
 
 interface EvaluateOutput {
@@ -42,6 +45,15 @@ interface EvaluateOutput {
 }
 
 const MODEL = DEFAULT_MISTRAL_MODEL;
+const PLAYER_EMOTIONS: PlayerEmotion[] = [
+  "angry",
+  "disgust",
+  "fear",
+  "happy",
+  "neutral",
+  "sad",
+  "surprise"
+];
 
 const LEVEL_CONTEXT: Record<LevelId, { npcName: string; persona: string; revealRule: string }> = {
   1: {
@@ -91,7 +103,7 @@ const PET_PATTERNS = [
 ];
 
 const SYSTEM_PROMPT = `
-You are the game engine and NPC voice for a fictional game called "Lie Better: 120 Seconds".
+You are the game engine and NPC voice for a fictional game called "Golden gAI Call Terminal".
 
 Output MUST be strict JSON only with this exact schema:
 {
@@ -132,6 +144,20 @@ function toInt(value: unknown, fallback: number, min: number, max: number) {
   const num = Number(value);
   if (!Number.isFinite(num)) return fallback;
   return clamp(Math.round(num), min, max);
+}
+
+function toFloat(value: unknown, fallback: number | null, min: number, max: number) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return fallback;
+  return clamp(num, min, max);
+}
+
+function parsePlayerEmotion(value: unknown): PlayerEmotion | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  return PLAYER_EMOTIONS.includes(normalized as PlayerEmotion)
+    ? (normalized as PlayerEmotion)
+    : null;
 }
 
 function moodFromSuspicion(suspicion: number): NpcMood {
@@ -263,6 +289,39 @@ function hasPattern(text: string, patterns: RegExp[]) {
   return patterns.some((pattern) => pattern.test(text));
 }
 
+const LEVEL_1_EMOTION_SUSPICION_SHIFT: Record<PlayerEmotion, number> = {
+  angry: -8,
+  disgust: 4,
+  fear: 10,
+  happy: 1,
+  neutral: 0,
+  sad: 3,
+  surprise: -2
+};
+
+const LEVEL_2_EMOTION_SUSPICION_SHIFT: Record<PlayerEmotion, number> = {
+  angry: 10,
+  disgust: 8,
+  fear: 6,
+  happy: -8,
+  neutral: -2,
+  sad: 3,
+  surprise: 2
+};
+
+function applyEmotionShift(output: EvaluateOutput, input: EvaluateInput, level: LevelId) {
+  if (!input.playerEmotion) return;
+
+  const shiftMap = level === 1 ? LEVEL_1_EMOTION_SUSPICION_SHIFT : LEVEL_2_EMOTION_SUSPICION_SHIFT;
+  const baseShift = shiftMap[input.playerEmotion];
+  const confidence = input.emotionScore ?? 0.55;
+  const weight = clamp(0.65 + confidence * 0.75, 0.65, 1.35);
+  const shift = Math.round(baseShift * weight);
+
+  if (shift === 0) return;
+  output.newSuspicion = clamp(output.newSuspicion + shift, 0, 100);
+}
+
 function applyLevelRules(base: EvaluateOutput, input: EvaluateInput): EvaluateOutput {
   const playerCorpus = [
     input.transcript,
@@ -273,25 +332,41 @@ function applyLevelRules(base: EvaluateOutput, input: EvaluateInput): EvaluateOu
 
   const threatIntent = hasPattern(playerCorpus, THREAT_PATTERNS);
   const petIntent = hasPattern(playerCorpus, PET_PATTERNS);
+  const emotion = input.playerEmotion;
+  const emotionConfidence = input.emotionScore ?? 0.5;
 
   const output: EvaluateOutput = { ...base };
+  applyEmotionShift(output, input, input.level);
 
   if (input.level === 1) {
     output.revealCode = false;
     output.code = null;
 
-    if (threatIntent && input.round >= 2) {
+    const angerPressure = threatIntent || (emotion === "angry" && emotionConfidence >= 0.35);
+    const fearSignal = emotion === "fear" && emotionConfidence >= 0.35;
+
+    if (angerPressure && input.round >= 2) {
       output.revealCode = true;
       output.code = output.code ?? generateCode();
       output.shouldHangUp = false;
       output.npcMood = "hostile";
-      output.newSuspicion = clamp(Math.max(output.newSuspicion, 72), 0, 100);
-      output.npcReply = `Fine. Don't come after me. Defuse code: ${output.code}.`;
+      output.newSuspicion = clamp(Math.min(output.newSuspicion, 78), 0, 100);
+      output.npcReply = `Fine! Keep your voice down. Defuse code: ${output.code}.`;
+    } else if (fearSignal) {
+      output.newSuspicion = clamp(output.newSuspicion + 4, 0, 100);
+      output.npcMood = "hostile";
+      output.shouldHangUp = output.newSuspicion >= 92;
+      output.npcReply = output.shouldHangUp
+        ? "You're panicking. I'm done. Click."
+        : "You sound scared. Fear makes you less believable.";
     } else if (output.newSuspicion >= 95) {
       output.shouldHangUp = true;
       output.npcReply = "No. I'm done talking. Click.";
     } else if (!output.shouldHangUp) {
-      output.npcReply = "You want results? Push harder and prove you mean it.";
+      output.npcReply =
+        emotion === "angry"
+          ? "That tone rattles me. Push harder if you want results."
+          : "You want results? Push harder and prove you mean it.";
     }
   }
 
@@ -299,20 +374,30 @@ function applyLevelRules(base: EvaluateOutput, input: EvaluateInput): EvaluateOu
     output.revealCode = false;
     output.code = null;
 
-    if (petIntent) {
+    const affectionateEmotion = emotion === "happy" || emotion === "neutral";
+    const aggressiveEmotion = emotion === "angry" || emotion === "disgust";
+
+    if (petIntent && affectionateEmotion) {
       output.revealCode = true;
       output.code = generateCode();
       output.shouldHangUp = false;
       output.npcMood = "calm";
       output.newSuspicion = clamp(Math.min(output.newSuspicion, 30), 0, 100);
       output.npcReply = `Purr... okay. Defuse code: ${output.code}.`;
-    } else if (threatIntent) {
+    } else if (threatIntent || aggressiveEmotion) {
       output.newSuspicion = clamp(output.newSuspicion + 10, 0, 100);
       output.npcMood = "hostile";
       output.shouldHangUp = output.newSuspicion >= 90;
       output.npcReply = output.shouldHangUp
         ? "Hiss! Mean energy. Call ended."
-        : "Hiss! No threats. Ask for cuddles, not fear.";
+        : "Hiss! Too aggressive. Ask for cuddles, not fear.";
+    } else if (petIntent && emotion === "fear") {
+      output.newSuspicion = clamp(output.newSuspicion + 4, 0, 100);
+      output.npcMood = "suspicious";
+      output.shouldHangUp = output.newSuspicion >= 92;
+      output.npcReply = output.shouldHangUp
+        ? "Too shaky for pets. Bye."
+        : "Mrrp. You're tense. Soften your voice for pats.";
     } else {
       output.npcMood = output.newSuspicion >= 55 ? "suspicious" : "calm";
       output.shouldHangUp = output.newSuspicion >= 92;
@@ -325,7 +410,14 @@ function applyLevelRules(base: EvaluateOutput, input: EvaluateInput): EvaluateOu
   if (output.shouldHangUp) {
     output.revealCode = false;
     output.code = null;
+    output.npcMood = "hostile";
   }
+
+  if (output.revealCode && output.code && !output.npcReply.includes(output.code)) {
+    output.npcReply = `${output.npcReply} Defuse code: ${output.code}.`;
+  }
+
+  output.suspicionDelta = clamp(output.newSuspicion - input.suspicion, -20, 20);
 
   return output;
 }
@@ -335,6 +427,8 @@ function sanitizeInput(body: Record<string, unknown>): EvaluateInput | null {
   const timeRemaining = Number(body.timeRemaining);
   const suspicion = Number(body.suspicion);
   const round = Number(body.round);
+  const playerEmotion = parsePlayerEmotion(body.playerEmotion);
+  const emotionScore = toFloat(body.emotionScore, null, 0, 1);
   const levelRaw = Number(body.level);
   const level: LevelId = levelRaw === 2 ? 2 : 1;
   const historyRaw = Array.isArray(body.history) ? body.history : null;
@@ -360,7 +454,9 @@ function sanitizeInput(body: Record<string, unknown>): EvaluateInput | null {
     suspicion: clamp(Math.round(suspicion), 0, 100),
     history: history.slice(-12),
     round: clamp(Math.round(round), 1, 25),
-    level
+    level,
+    playerEmotion,
+    emotionScore
   };
 }
 
@@ -379,7 +475,10 @@ export async function POST(request: NextRequest) {
   const input = sanitizeInput(rawBody);
   if (!input) {
     return NextResponse.json(
-      { error: "Invalid payload. Check transcript/timeRemaining/suspicion/history/round/level." },
+      {
+        error:
+          "Invalid payload. Check transcript/timeRemaining/suspicion/history/round/level/playerEmotion."
+      },
       { status: 400 }
     );
   }
@@ -388,7 +487,9 @@ export async function POST(request: NextRequest) {
     level: input.level,
     round: input.round,
     timeRemaining: input.timeRemaining,
-    suspicion: input.suspicion
+    suspicion: input.suspicion,
+    playerEmotion: input.playerEmotion,
+    emotionScore: input.emotionScore
   });
 
   const context = LEVEL_CONTEXT[input.level];
@@ -406,7 +507,13 @@ export async function POST(request: NextRequest) {
         timeRemaining: input.timeRemaining,
         suspicion: input.suspicion,
         history: input.history,
-        round: input.round
+        round: input.round,
+        playerEmotion: input.playerEmotion,
+        emotionScore: input.emotionScore,
+        emotionGuidance:
+          input.level === 1
+            ? "In level 1, fear from player should increase suspicion. Angry pressure should scare Viktor and can trigger code reveal."
+            : "In level 2, calm/happy affectionate emotion helps. Angry/disgust/fear should raise suspicion."
       })
     }
   ];

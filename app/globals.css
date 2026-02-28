@@ -6,8 +6,14 @@
   color-scheme: dark;
 }
 
+html,
+body {
+  height: 100%;
+}
+
 body {
   min-height: 100vh;
+  overflow: hidden;
   color: rgb(241 245 249);
   background:
     radial-gradient(1200px 600px at 90% -10%, rgb(14 116 144 / 0.2), transparent),
@@ -23,38 +29,301 @@ body {
   box-shadow: 0 0 35px rgb(6 182 212 / 0.1);
 }
 
+.tv-shell {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 84px;
+  gap: 0.85rem;
+  padding: 1rem;
+  border-radius: 1.4rem;
+  border: 1px solid rgb(217 119 6 / 0.55);
+  background:
+    radial-gradient(700px 180px at 40% -25%, rgb(254 240 138 / 0.2), transparent),
+    linear-gradient(165deg, rgb(41 37 36 / 0.95), rgb(17 24 39 / 0.95)),
+    rgb(17 24 39);
+  box-shadow:
+    0 0 45px rgb(245 158 11 / 0.25),
+    inset 0 0 18px rgb(217 119 6 / 0.4);
+}
+
+.tv-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  min-height: 0;
+}
+
+.tv-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-radius: 0.9rem;
+  border: 1px solid rgb(245 158 11 / 0.45);
+  background: linear-gradient(180deg, rgb(69 26 3 / 0.75), rgb(28 25 23 / 0.8));
+  padding: 0.55rem 0.75rem;
+}
+
+.tv-status {
+  display: inline-flex;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 9999px;
+  background: rgb(250 204 21);
+  box-shadow: 0 0 10px rgb(250 204 21 / 0.9);
+}
+
+.news-banner {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  border-radius: 0.8rem;
+  overflow: hidden;
+  border: 1px solid rgb(239 68 68 / 0.85);
+  background: rgb(15 23 42);
+  box-shadow: 0 0 16px rgb(239 68 68 / 0.35);
+}
+
+.news-tag {
+  display: inline-flex;
+  align-items: center;
+  background: linear-gradient(180deg, rgb(220 38 38), rgb(153 27 27));
+  color: rgb(254 242 242);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  padding: 0 0.75rem;
+}
+
+.news-strip {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(180deg, rgb(127 29 29 / 0.7), rgb(69 10 10 / 0.85));
+}
+
+.news-track {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  min-width: 100%;
+  color: rgb(254 242 242);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.42rem 0;
+  animation: news-marquee 13s linear infinite;
+}
+
+.news-track span {
+  padding-right: 2.8rem;
+}
+
+.news-banner-strong {
+  border-width: 2px;
+  border-color: rgb(248 113 113 / 0.95);
+  box-shadow:
+    0 0 24px rgb(248 113 113 / 0.45),
+    inset 0 0 10px rgb(127 29 29 / 0.45);
+}
+
+.news-banner-strong .news-tag {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.19em;
+  padding: 0 1rem;
+  background: linear-gradient(180deg, rgb(239 68 68), rgb(153 27 27));
+}
+
+.news-banner-strong .news-strip {
+  background:
+    linear-gradient(180deg, rgb(153 27 27 / 0.95), rgb(69 10 10 / 0.95)),
+    rgb(69 10 10);
+}
+
+.news-banner-strong .news-track {
+  font-size: 15px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  padding: 0.62rem 0;
+  text-shadow: 0 0 8px rgb(254 202 202 / 0.55);
+  animation-duration: 9s;
+}
+
+@keyframes news-marquee {
+  0% {
+    transform: translateX(0);
+  }
+
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+.tv-screen-frame {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-radius: 1rem;
+  border: 2px solid rgb(217 119 6 / 0.5);
+  background:
+    linear-gradient(180deg, rgb(124 45 18 / 0.35), rgb(30 41 59 / 0.6)),
+    rgb(15 23 42);
+  padding: 0.55rem;
+}
+
+.tv-screen {
+  height: 100%;
+  min-height: 0;
+  border-radius: 0.75rem;
+  border: 1px solid rgb(34 211 238 / 0.35);
+  background:
+    linear-gradient(180deg, rgb(6 78 59 / 0.15), rgb(2 6 23 / 0.85)),
+    rgb(2 6 23);
+  position: relative;
+  overflow: hidden;
+}
+
+.tv-screen::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent 0 3px,
+    rgb(148 163 184 / 0.03) 3px 4px
+  );
+}
+
+.tv-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  border-radius: 0.9rem;
+  border: 1px solid rgb(161 98 7 / 0.45);
+  background: linear-gradient(180deg, rgb(68 64 60 / 0.9), rgb(28 25 23 / 0.95));
+  padding: 0.7rem 0.55rem;
+}
+
+.tv-speaker {
+  width: 100%;
+  border-radius: 0.45rem;
+  border: 1px solid rgb(245 158 11 / 0.35);
+  background: rgb(17 24 39 / 0.7);
+  padding: 0.35rem 0.3rem;
+}
+
+.tv-speaker-line {
+  height: 2px;
+  border-radius: 9999px;
+  background: rgb(203 213 225 / 0.45);
+  margin: 2px 0;
+}
+
+.tv-knob {
+  width: 2.4rem;
+  height: 2.4rem;
+  border-radius: 9999px;
+  border: 2px solid rgb(245 158 11 / 0.7);
+  background:
+    radial-gradient(circle at 30% 30%, rgb(251 191 36), rgb(120 53 15)),
+    rgb(120 53 15);
+  box-shadow:
+    inset 0 0 7px rgb(15 23 42 / 0.7),
+    0 0 9px rgb(245 158 11 / 0.25);
+  position: relative;
+}
+
+.tv-knob::before {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 3px;
+  height: 7px;
+  border-radius: 9999px;
+  background: rgb(15 23 42);
+}
+
+.tv-button {
+  width: 2.2rem;
+  height: 0.7rem;
+  border-radius: 9999px;
+  border: 1px solid rgb(245 158 11 / 0.5);
+  background: linear-gradient(180deg, rgb(217 119 6), rgb(120 53 15));
+}
+
 .phone-frame {
   position: relative;
-  border-radius: 2.4rem;
-  padding: 0.8rem;
-  border: 1px solid rgb(56 189 248 / 0.45);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  max-height: 100%;
+  border-radius: 2.8rem;
+  padding: 0.58rem;
+  border: 1px solid rgb(148 163 184 / 0.6);
   background:
-    linear-gradient(145deg, rgb(8 47 73 / 0.55), rgb(15 23 42 / 0.94)),
+    linear-gradient(160deg, rgb(226 232 240 / 0.75), rgb(30 41 59 / 0.95)),
     rgb(2 6 23);
   box-shadow:
-    0 0 40px rgb(34 211 238 / 0.2),
-    inset 0 0 25px rgb(34 211 238 / 0.08);
+    0 0 35px rgb(71 85 105 / 0.3),
+    inset 0 0 14px rgb(255 255 255 / 0.18);
+}
+
+.phone-frame::before,
+.phone-frame::after {
+  content: "";
+  position: absolute;
+  right: -3px;
+  width: 3px;
+  border-radius: 9999px;
+  background: rgb(148 163 184 / 0.85);
+}
+
+.phone-frame::before {
+  top: 140px;
+  height: 54px;
+}
+
+.phone-frame::after {
+  top: 210px;
+  height: 34px;
 }
 
 .phone-screen {
-  min-height: 760px;
-  border-radius: 1.8rem;
-  border: 1px solid rgb(34 211 238 / 0.3);
+  flex: 1;
+  min-height: 0;
+  max-height: 100%;
+  border-radius: 2.2rem;
+  border: 1px solid rgb(71 85 105 / 0.7);
   background:
-    linear-gradient(180deg, rgb(15 23 42 / 0.92), rgb(2 6 23 / 0.98)),
+    radial-gradient(500px 180px at 50% -15%, rgb(6 182 212 / 0.22), transparent),
+    linear-gradient(180deg, rgb(15 23 42 / 0.94), rgb(2 6 23 / 0.99)),
     rgb(2 6 23);
-  padding: 1rem;
+  padding: 0.85rem;
+  position: relative;
 }
 
 .phone-notch {
-  width: 42%;
-  max-width: 180px;
-  height: 1.2rem;
-  margin: 0 auto 0.8rem;
+  width: 46%;
+  max-width: 172px;
+  height: 1.25rem;
+  margin: 0 auto 0.7rem;
   border-radius: 9999px;
-  border: 1px solid rgb(34 211 238 / 0.3);
-  background: rgb(15 23 42);
-  box-shadow: 0 0 14px rgb(34 211 238 / 0.2);
+  border: 1px solid rgb(71 85 105 / 0.8);
+  background: linear-gradient(180deg, rgb(15 23 42), rgb(2 6 23));
+  box-shadow: inset 0 -2px 6px rgb(2 6 23 / 0.9);
+}
+
+.phone-home {
+  width: 34%;
+  max-width: 120px;
+  height: 5px;
+  margin: 0.55rem auto 0.15rem;
+  border-radius: 9999px;
+  background: rgb(226 232 240 / 0.85);
 }
 
 .holo-outline {

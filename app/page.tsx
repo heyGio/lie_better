@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Image from "next/image";
 import { CodeEntry } from "@/app/components/CodeEntry";
 import { ConversationLog } from "@/app/components/ConversationLog";
-import { GameHeader } from "@/app/components/GameHeader";
 import { Meters } from "@/app/components/Meters";
 import { PushToTalk } from "@/app/components/PushToTalk";
 import { StatusPill } from "@/app/components/StatusPill";
@@ -12,6 +12,8 @@ import type { HistoryItem, NpcMood } from "@/app/components/types";
 type GameStatus = "idle" | "playing" | "won" | "lost";
 type LoseReason = "CALL ENDED" | "TIME OUT" | null;
 type LevelId = 1 | 2;
+type PlayerEmotion = "angry" | "disgust" | "fear" | "happy" | "neutral" | "sad" | "surprise";
+type EmotionScores = Record<PlayerEmotion, number>;
 
 interface EvaluateResponse {
   npcReply: string;
@@ -31,7 +33,17 @@ interface EvaluateResponse {
 
 interface TranscribeResponse {
   transcript?: string;
+  emotion?: PlayerEmotion | null;
+  emotionScore?: number | null;
+  emotionScores?: Partial<Record<PlayerEmotion, number>> | null;
   error?: string;
+}
+
+interface TranscriptionResult {
+  transcript: string;
+  emotion: PlayerEmotion | null;
+  emotionScore: number | null;
+  emotionScores: EmotionScores | null;
 }
 
 interface NpcSpeechProfile {
@@ -69,6 +81,17 @@ const LEVELS: Record<LevelId, LevelMeta> = {
 
 const START_TIME = 120;
 const START_SUSPICION = 50;
+const PLAYER_EMOTIONS: PlayerEmotion[] = [
+  "angry",
+  "disgust",
+  "fear",
+  "happy",
+  "neutral",
+  "sad",
+  "surprise"
+];
+const TV_NEWS_TICKER =
+  "BBC NEWS ALERT ALERT • DEVICE CRISIS LIVE • GOLDEN gAI EXCLUSIVE • HIGH-PRESSURE CALL IN PROGRESS •";
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -100,6 +123,39 @@ function formatTime(totalSeconds: number) {
   return `${minutes}:${seconds}`;
 }
 
+function parseEmotionScores(payload: unknown): EmotionScores | null {
+  if (!payload || typeof payload !== "object") return null;
+
+  const source = payload as Record<string, unknown>;
+  const scores: EmotionScores = {
+    angry: 0,
+    disgust: 0,
+    fear: 0,
+    happy: 0,
+    neutral: 0,
+    sad: 0,
+    surprise: 0
+  };
+
+  let hasValue = false;
+  for (const emotion of PLAYER_EMOTIONS) {
+    const raw = Number(source[emotion]);
+    if (!Number.isFinite(raw)) continue;
+    scores[emotion] = clamp(raw, 0, 1);
+    if (raw > 0) hasValue = true;
+  }
+
+  return hasValue ? scores : null;
+}
+
+function shouldIgnoreSpaceHotkey(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+
+  const tag = target.tagName.toLowerCase();
+  return tag === "input" || tag === "textarea" || tag === "select" || tag === "button";
+}
+
 export default function Home() {
   const [currentLevel, setCurrentLevel] = useState<LevelId>(1);
   const [gameStatus, setGameStatus] = useState<GameStatus>("idle");
@@ -113,8 +169,11 @@ export default function Home() {
   const [isLiveSyncing, setIsLiveSyncing] = useState<boolean>(false);
   const [isTranscribing, setIsTranscribing] = useState<boolean>(false);
   const [lastTranscript, setLastTranscript] = useState<string>("");
-  const [liveTranscript, setLiveTranscript] = useState<string>("");
-  const [draftTranscript, setDraftTranscript] = useState<string>("");
+  const [lastEmotion, setLastEmotion] = useState<PlayerEmotion | null>(null);
+  const [lastEmotionScore, setLastEmotionScore] = useState<number | null>(null);
+  const [lastEmotionScores, setLastEmotionScores] = useState<EmotionScores | null>(null);
+  const [, setLiveTranscript] = useState<string>("");
+  const [, setDraftTranscript] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
   const [recordingSupported, setRecordingSupported] = useState<boolean>(false);
   const [micError, setMicError] = useState<string>("");
@@ -134,6 +193,7 @@ export default function Home() {
   const thinkingPulseTimeoutRef = useRef<number | null>(null);
   const thinkingAudioContextRef = useRef<AudioContext | null>(null);
   const ttsTokenRef = useRef<number>(0);
+  const spacePttActiveRef = useRef<boolean>(false);
 
   const levelMeta = LEVELS[currentLevel];
   const busy = loading || isTranscribing;
@@ -253,10 +313,10 @@ export default function Home() {
       const suspicionForVoice = clamp(profile?.suspicion ?? suspicion, 0, 100);
       const moodForVoice: NpcMood = profile?.mood ?? npcMood;
 
+      // Stop previous NPC audio first. This increments token to invalidate any old in-flight TTS request.
+      stopNpcVoice();
       const token = ttsTokenRef.current + 1;
       ttsTokenRef.current = token;
-
-      stopNpcVoice();
       startThinkingPulse();
 
       try {
@@ -283,7 +343,10 @@ export default function Home() {
           throw new Error("TTS returned empty audio.");
         }
 
-        if (token !== ttsTokenRef.current) return;
+        if (token !== ttsTokenRef.current) {
+          console.info("🔇  [TTS] Ignoring stale TTS response (token mismatch)");
+          return;
+        }
 
         const audioUrl = URL.createObjectURL(audioBlob);
         npcAudioUrlRef.current = audioUrl;
@@ -324,7 +387,10 @@ export default function Home() {
           stopThinkingPulse();
         };
 
-        if (token !== ttsTokenRef.current) return;
+        if (token !== ttsTokenRef.current) {
+          console.info("🔇  [TTS] Ignoring stale TTS audio before play (token mismatch)");
+          return;
+        }
         npcAudioRef.current = audio;
         await audio.play();
         console.info("🔊  [TTS] Level 1 NPC voice started");
@@ -370,7 +436,11 @@ export default function Home() {
   );
 
   const submitTurn = useCallback(
-    async (rawTranscript: string) => {
+    async (
+      rawTranscript: string,
+      playerEmotion: PlayerEmotion | null = null,
+      emotionScore: number | null = null
+    ) => {
       const transcript = rawTranscript.trim();
       if (!transcript || gameStatus !== "playing" || loading) return;
 
@@ -395,7 +465,9 @@ export default function Home() {
             suspicion,
             history: historyForEval,
             round,
-            level: currentLevel
+            level: currentLevel,
+            playerEmotion,
+            emotionScore
           })
         });
 
@@ -459,39 +531,48 @@ export default function Home() {
     ]
   );
 
-  const transcribeBlob = useCallback(async (audioBlob: Blob): Promise<string> => {
-    const ext = audioBlob.type.includes("ogg")
-      ? "ogg"
-      : audioBlob.type.includes("mp4")
-        ? "mp4"
-        : "webm";
+  const transcribeBlob = useCallback(
+    async (audioBlob: Blob, analyzeEmotion: boolean): Promise<TranscriptionResult> => {
+      const ext = audioBlob.type.includes("ogg")
+        ? "ogg"
+        : audioBlob.type.includes("mp4")
+          ? "mp4"
+          : "webm";
 
-    const file = new File([audioBlob], `turn-${Date.now()}.${ext}`, {
-      type: audioBlob.type || "audio/webm"
-    });
+      const file = new File([audioBlob], `turn-${Date.now()}.${ext}`, {
+        type: audioBlob.type || "audio/webm"
+      });
 
-    const formData = new FormData();
-    formData.append("audio", file);
-    formData.append("language", "en");
+      const formData = new FormData();
+      formData.append("audio", file);
+      formData.append("language", "en");
+      formData.append("analyzeEmotion", analyzeEmotion ? "1" : "0");
 
-    const response = await fetch("/api/transcribe", {
-      method: "POST",
-      body: formData
-    });
+      const response = await fetch("/api/transcribe", {
+        method: "POST",
+        body: formData
+      });
 
-    const payload = (await response.json().catch(() => ({}))) as TranscribeResponse;
+      const payload = (await response.json().catch(() => ({}))) as TranscribeResponse;
 
-    if (!response.ok) {
-      throw new Error(payload.error || "Transcription failed.");
-    }
+      if (!response.ok) {
+        throw new Error(payload.error || "Transcription failed.");
+      }
 
-    const transcript = (payload.transcript || "").trim();
-    if (!transcript) {
-      throw new Error("No transcript returned.");
-    }
+      const transcript = (payload.transcript || "").trim();
+      if (!transcript) {
+        throw new Error("No transcript returned.");
+      }
 
-    return transcript;
-  }, []);
+      return {
+        transcript,
+        emotion: payload.emotion ?? null,
+        emotionScore: typeof payload.emotionScore === "number" ? payload.emotionScore : null,
+        emotionScores: parseEmotionScores(payload.emotionScores)
+      };
+    },
+    []
+  );
 
   const requestPartialTranscription = useCallback(
     async (sessionId: number) => {
@@ -514,7 +595,7 @@ export default function Home() {
       setIsLiveSyncing(true);
 
       try {
-        const transcript = await transcribeBlob(blob);
+        const { transcript } = await transcribeBlob(blob, false);
         if (recordingSessionRef.current !== sessionId || gameStatus !== "playing" || !isRecording) {
           return;
         }
@@ -541,12 +622,18 @@ export default function Home() {
       setMicError("");
 
       try {
-        const transcript = await transcribeBlob(audioBlob);
+        const { transcript, emotion, emotionScore, emotionScores } = await transcribeBlob(
+          audioBlob,
+          true
+        );
         if (recordingSessionRef.current !== sessionId || gameStatus !== "playing") return;
 
         setLiveTranscript(transcript);
         setDraftTranscript(transcript);
-        await submitTurn(transcript);
+        setLastEmotion(emotion);
+        setLastEmotionScore(emotionScore);
+        setLastEmotionScores(emotionScores);
+        await submitTurn(transcript, emotion, emotionScore);
       } catch (error) {
         console.error("🚨  [Game] Final transcription failed", error);
         setMicError("Could not transcribe audio. Try recording again.");
@@ -579,6 +666,9 @@ export default function Home() {
       setRevealedCode(null);
       setPlayerCodeInput("");
       setLastTranscript("");
+      setLastEmotion(null);
+      setLastEmotionScore(null);
+      setLastEmotionScores(null);
       setLiveTranscript("");
       setDraftTranscript("");
       setMicError("");
@@ -647,6 +737,9 @@ export default function Home() {
     setRevealedCode(null);
     setPlayerCodeInput("");
     setLastTranscript("");
+    setLastEmotion(null);
+    setLastEmotionScore(null);
+    setLastEmotionScores(null);
     setLiveTranscript("");
     setDraftTranscript("");
     setMicError("");
@@ -657,7 +750,7 @@ export default function Home() {
     setFlashLoss(false);
   };
 
-  const handlePressStart = async () => {
+  const handlePressStart = useCallback(async () => {
     if (!recordingSupported || gameStatus !== "playing" || busy || isRecording) return;
 
     stopNpcVoice();
@@ -739,12 +832,67 @@ export default function Home() {
       setMicError("Microphone access denied or unavailable.");
       setIsRecording(false);
     }
-  };
+  }, [
+    busy,
+    finalizeRecording,
+    gameStatus,
+    isRecording,
+    recordingSupported,
+    requestPartialTranscription,
+    stopNpcVoice,
+    stopThinkingPulse
+  ]);
 
-  const handlePressEnd = () => {
+  const handlePressEnd = useCallback(() => {
     if (!isRecording) return;
     stopRecording(false);
-  };
+  }, [isRecording, stopRecording]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.code !== "Space") return;
+      if (shouldIgnoreSpaceHotkey(event.target)) return;
+
+      if (event.repeat || spacePttActiveRef.current) {
+        event.preventDefault();
+        return;
+      }
+
+      if (!recordingSupported || gameStatus !== "playing" || busy) return;
+
+      event.preventDefault();
+      spacePttActiveRef.current = true;
+      void handlePressStart();
+    };
+
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.code !== "Space") return;
+      if (!spacePttActiveRef.current) return;
+
+      event.preventDefault();
+      spacePttActiveRef.current = false;
+      handlePressEnd();
+    };
+
+    const onWindowBlur = () => {
+      if (!spacePttActiveRef.current) return;
+      spacePttActiveRef.current = false;
+      handlePressEnd();
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onWindowBlur);
+
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onWindowBlur);
+      spacePttActiveRef.current = false;
+    };
+  }, [busy, gameStatus, handlePressEnd, handlePressStart, recordingSupported]);
 
   const handleDefuse = () => {
     if (gameStatus !== "playing" || !revealedCode) return;
@@ -791,58 +939,101 @@ export default function Home() {
     }
   };
 
-  const liveDisplayText = isRecording
-    ? liveTranscript || "Listening..."
-    : draftTranscript || "No transcript yet.";
+  const sortedEmotionScores = lastEmotionScores
+    ? [...PLAYER_EMOTIONS]
+        .map((emotion) => ({ emotion, score: lastEmotionScores[emotion] ?? 0 }))
+        .sort((a, b) => b.score - a.score)
+    : [];
 
   return (
-    <main className="relative min-h-screen px-4 py-6 md:px-8 md:py-10">
+    <main className="relative h-screen overflow-hidden px-2 py-2 md:px-4 md:py-3">
       <div className={`pointer-events-none fixed inset-0 ${flashLoss ? "loss-flash" : ""}`} />
 
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-5">
-        <GameHeader />
+      <div className="mx-auto flex h-full w-full max-w-[1700px] flex-col">
+        <div className="grid h-full min-h-0 gap-3 lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_360px]">
+          <aside className="tv-shell h-full min-h-0 overflow-hidden">
+            <div className="tv-main min-h-0">
+              <div className="tv-topline">
+                <div className="flex items-center gap-2">
+                  <span className="tv-status" />
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-amber-200">
+                    Character Feed
+                  </p>
+                </div>
+                <p className="text-[11px] uppercase tracking-[0.15em] text-amber-100">{levelMeta.title}</p>
+              </div>
 
-        <div className="grid gap-5 lg:grid-cols-[300px_1fr]">
-          <aside className="panel flex flex-col gap-4 p-4">
-            <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-cyan-300">Character Feed</p>
-              <p className="text-base font-semibold text-slate-100">{levelMeta.title}</p>
-            </div>
+              <div className="tv-screen-frame flex-1 min-h-0">
+                <div className="tv-screen flex h-full min-h-0 flex-col gap-3 border-2 border-dashed border-cyan-400/35 p-3">
+                  <div className="news-banner news-banner-strong">
+                    <span className="news-tag">BBC News Alert</span>
+                    <div className="news-strip">
+                      <div className="news-track">
+                        <span>{TV_NEWS_TICKER}</span>
+                        <span>{TV_NEWS_TICKER}</span>
+                      </div>
+                    </div>
+                  </div>
 
-            <div className="holo-outline flex h-[360px] items-center justify-center rounded-2xl border-2 border-dashed border-cyan-400/35 p-3 text-center">
-              <div className="space-y-2">
-                <p className="text-xs uppercase tracking-[0.14em] text-cyan-200">Image Placeholder</p>
-                <p className="text-sm text-slate-300">{levelMeta.visualHint}</p>
+                  <div className="flex flex-1 items-center justify-center text-center">
+                    <div className="space-y-3">
+                      <p className="text-xs uppercase tracking-[0.14em] text-cyan-200">Character Visual Feed</p>
+                      <Image
+                        src="/assets/game-small.svg"
+                        alt="Character feed placeholder visual"
+                        width={96}
+                        height={96}
+                        className="mx-auto rounded-lg border border-cyan-400/35 bg-slate-900/70 p-2"
+                      />
+                      <p className="text-sm text-slate-300">{levelMeta.visualHint}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-2 rounded-xl border border-amber-400/25 bg-slate-900/75 p-3">
+                <p className="text-xs uppercase tracking-[0.14em] text-amber-300">Objective</p>
+                <p className="text-sm text-slate-200">{levelMeta.objective}</p>
+                <p className="text-xs text-slate-400">Hint: {levelMeta.hint}</p>
+              </div>
+
+              <div className="space-y-2 rounded-xl border border-emerald-400/30 bg-emerald-500/10 p-3">
+                <p className="text-xs uppercase tracking-[0.14em] text-emerald-300">Defuse Panel</p>
+                {revealedCode ? (
+                  <CodeEntry
+                    codeKnown={true}
+                    value={playerCodeInput}
+                    disabled={busy || gameStatus !== "playing"}
+                    onChange={setPlayerCodeInput}
+                    onDefuse={handleDefuse}
+                  />
+                ) : (
+                  <div className="rounded-lg border border-emerald-300/25 bg-slate-900/70 p-3 text-sm text-slate-300">
+                    Waiting for the 4-digit code from the caller.
+                  </div>
+                )}
               </div>
             </div>
 
-            <div className="space-y-2 rounded-xl border border-cyan-500/20 bg-slate-900/70 p-3">
-              <p className="text-xs uppercase tracking-[0.14em] text-cyan-300">Objective</p>
-              <p className="text-sm text-slate-200">{levelMeta.objective}</p>
-              <p className="text-xs text-slate-400">Hint: {levelMeta.hint}</p>
-            </div>
-
-            <div className="space-y-2 rounded-xl border border-emerald-400/30 bg-emerald-500/10 p-3">
-              <p className="text-xs uppercase tracking-[0.14em] text-emerald-300">Defuse Panel</p>
-              {revealedCode ? (
-                <CodeEntry
-                  codeKnown={true}
-                  value={playerCodeInput}
-                  disabled={busy || gameStatus !== "playing"}
-                  onChange={setPlayerCodeInput}
-                  onDefuse={handleDefuse}
-                />
-              ) : (
-                <div className="rounded-lg border border-emerald-300/25 bg-slate-900/70 p-3 text-sm text-slate-300">
-                  Waiting for the 4-digit code from the caller.
-                </div>
-              )}
+            <div className="tv-controls">
+              <div className="tv-speaker">
+                <div className="tv-speaker-line" />
+                <div className="tv-speaker-line" />
+                <div className="tv-speaker-line" />
+                <div className="tv-speaker-line" />
+                <div className="tv-speaker-line" />
+              </div>
+              <div className="tv-knob" />
+              <div className="tv-knob" />
+              <span className="tv-button" />
+              <span className="tv-button" />
+              <span className="tv-button" />
             </div>
           </aside>
 
-          <section className="phone-frame">
+          <section className="phone-frame h-full max-h-full w-full max-w-[340px] overflow-hidden lg:justify-self-end xl:max-w-[360px]">
             <div className="phone-notch" />
-            <div className="phone-screen flex flex-col gap-4">
+            <div className="phone-screen flex h-full min-h-0 flex-col gap-3 overflow-hidden">
               <div className="holo-outline flex items-center justify-between px-3 py-2">
                 <div className="flex items-center gap-2">
                   <span className="pulse-dot" />
@@ -881,23 +1072,45 @@ export default function Home() {
 
               <div className="holo-outline space-y-2 p-3">
                 <div className="flex items-center justify-between">
-                  <p className="text-xs uppercase tracking-[0.15em] text-cyan-300">Live Transcript</p>
+                  <p className="text-xs uppercase tracking-[0.15em] text-amber-300">Emotion Signal</p>
                   <p className="text-[11px] text-slate-400">
                     {isRecording
                       ? isLiveSyncing
-                        ? "Syncing..."
+                        ? "Analyzing..."
                         : "Recording..."
                       : isTranscribing
                         ? "Finalizing..."
                         : "Idle"}
                   </p>
                 </div>
-                <p className="min-h-[48px] rounded-lg border border-cyan-400/20 bg-slate-900/80 p-2 text-sm text-slate-100">
-                  {liveDisplayText}
-                </p>
+                {lastEmotion ? (
+                  <p className="rounded-lg border border-amber-400/25 bg-amber-500/10 px-2 py-1 text-xs uppercase tracking-[0.12em] text-amber-200">
+                    Detected: {lastEmotion}
+                    {typeof lastEmotionScore === "number"
+                      ? ` (${Math.round(lastEmotionScore * 100)}%)`
+                      : ""}
+                  </p>
+                ) : (
+                  <p className="rounded-lg border border-slate-700 bg-slate-900/70 px-2 py-1 text-xs text-slate-400">
+                    No emotion sample yet.
+                  </p>
+                )}
+                {sortedEmotionScores.length > 0 ? (
+                  <div className="grid grid-cols-2 gap-1 text-[11px]">
+                    {sortedEmotionScores.map((entry) => (
+                      <p
+                        key={entry.emotion}
+                        className="flex items-center justify-between rounded border border-slate-700/80 bg-slate-900/70 px-2 py-1 uppercase tracking-[0.06em] text-slate-300"
+                      >
+                        <span>{entry.emotion}</span>
+                        <span>{Math.round(entry.score * 100)}%</span>
+                      </p>
+                    ))}
+                  </div>
+                ) : null}
                 {lastTranscript ? (
-                  <p className="text-[11px] text-slate-400">
-                    Last sent: <span className="text-slate-200">{lastTranscript}</span>
+                  <p className="text-[11px] text-slate-500">
+                    Last sent: <span className="text-slate-300">{lastTranscript}</span>
                   </p>
                 ) : null}
               </div>
@@ -1006,13 +1219,11 @@ export default function Home() {
                   </button>
                 </div>
               ) : null}
+
+              <div className="phone-home" />
             </div>
           </section>
         </div>
-
-        <p className="text-center text-xs text-slate-500">
-          Fictional voice persuasion thriller only. No real-world harmful guidance.
-        </p>
       </div>
     </main>
   );

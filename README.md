@@ -13,6 +13,8 @@ Team: **Golden gAI**
 - Mistral API (server-side only)
 - ElevenLabs TTS for Level 1 NPC voice replies
   - Voice tone is dynamically adapted from NPC suspicion/mood
+- Hugging Face speech emotion recognition (`r-f/wav2vec-english-speech-emotion-recognition`)
+  - Player audio emotion influences NPC behavior per level
 
 ## Quick Start
 
@@ -44,6 +46,8 @@ ELEVENLABS_MODEL_ID=eleven_flash_v2_5
 ELEVENLABS_VOICE_ID=zYcjlYFOd3taleS0gkk3
 ELEVENLABS_OUTPUT_FORMAT=mp3_22050_32
 ELEVENLABS_OPTIMIZE_STREAMING_LATENCY=4
+HUGGINGFACE_API_TOKEN=YOUR_KEY_HERE
+HF_EMOTION_MODEL=r-f/wav2vec-english-speech-emotion-recognition
 ```
 
 ## Scripts
@@ -52,6 +56,16 @@ ELEVENLABS_OPTIMIZE_STREAMING_LATENCY=4
 - `npm run build` - production build
 - `npm run start` - run production build
 - `npm run lint` - lint project
+
+## Web Game Structure (Skill Merge)
+
+This repo now includes a merged structure inspired by `develop-web-game`:
+
+- `public/assets/game.png`
+- `public/assets/game-small.svg`
+- `tools/develop-web-game/scripts/web_game_playwright_client.js`
+- `tools/develop-web-game/references/action_payloads.json`
+- merge notes: `docs/WEB_GAME_STRUCTURE_MERGE.md`
 
 ## Demo Script
 
@@ -75,7 +89,11 @@ ELEVENLABS_OPTIMIZE_STREAMING_LATENCY=4
     v
 [Mistral Audio Transcription]
     |
-    | transcript
+    | (parallel on final recording)
+    v
+[Hugging Face Speech Emotion]
+    |
+    | transcript + detected emotion
     v
 [Browser UI]
     |
@@ -104,6 +122,7 @@ ELEVENLABS_OPTIMIZE_STREAMING_LATENCY=4
 
 - `GET /api/health` -> `{ "ok": true }`
 - `POST /api/transcribe` -> returns voice transcript from audio using Mistral
+  - on final turn, also returns emotion (`angry|disgust|fear|happy|neutral|sad|surprise`) from Hugging Face
 - `GET /api/tts` -> low-latency streaming level-1 NPC voice audio using ElevenLabs
 - `POST /api/tts` -> non-streaming fallback level-1 NPC voice audio
 - `POST /api/evaluate` -> returns:
@@ -117,6 +136,7 @@ ELEVENLABS_OPTIMIZE_STREAMING_LATENCY=4
 - MediaRecorder support varies by browser/platform.
 - Some browsers require secure context and explicit microphone permission.
 - Browser autoplay policies can block speech playback until user interaction.
+- Emotion inference quality depends on microphone quality, noise, and accent/domain mismatch.
 
 ## Safety Note
 
