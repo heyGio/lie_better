@@ -9,16 +9,19 @@
 html,
 body {
   height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 body {
   min-height: 100vh;
   overflow: hidden;
   color: rgb(241 245 249);
-  background:
-    radial-gradient(1200px 600px at 90% -10%, rgb(14 116 144 / 0.2), transparent),
-    radial-gradient(900px 500px at -10% 110%, rgb(190 24 93 / 0.16), transparent),
-    rgb(2 6 23);
+  background: url("/assets/background_1.png");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
 }
 
 .panel {
@@ -306,6 +309,19 @@ body {
   position: relative;
 }
 
+.phone-screen::-webkit-scrollbar {
+  width: 6px;
+}
+
+.phone-screen::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background: rgb(34 211 238 / 0.35);
+}
+
+.phone-screen::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 .phone-notch {
   width: 46%;
   max-width: 172px;
@@ -383,5 +399,103 @@ body {
 
   50% {
     background: rgb(248 113 113 / 0.35);
+  }
+}
+
+.webcam-crt-frame {
+  box-shadow:
+    inset 0 0 26px rgb(16 185 129 / 0.1),
+    0 0 22px rgb(34 211 238 / 0.12);
+}
+
+.webcam-crt-video {
+  filter:
+    contrast(1.12)
+    saturate(0.86)
+    hue-rotate(-8deg)
+    brightness(0.88)
+    blur(0.2px);
+  animation: webcam-vhs-wobble 3600ms steps(28, end) infinite;
+}
+
+.webcam-crt-rgb {
+  mix-blend-mode: screen;
+  opacity: 0.2;
+  background:
+    linear-gradient(90deg, rgb(255 0 0 / 0.2), transparent 30%),
+    linear-gradient(270deg, rgb(0 180 255 / 0.22), transparent 35%);
+}
+
+.webcam-crt-scanlines {
+  opacity: 0.42;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgb(2 6 23 / 0.02) 0px,
+    rgb(2 6 23 / 0.02) 2px,
+    rgb(148 163 184 / 0.22) 3px,
+    rgb(2 6 23 / 0.03) 4px
+  );
+  animation: webcam-scanline-shift 1450ms linear infinite;
+}
+
+.webcam-crt-noise {
+  opacity: 0.16;
+  background-image:
+    radial-gradient(rgb(255 255 255 / 0.35) 0.6px, transparent 0.7px),
+    radial-gradient(rgb(148 163 184 / 0.2) 0.8px, transparent 0.9px);
+  background-size: 3px 3px, 4px 4px;
+  background-position: 0 0, 1px 2px;
+  mix-blend-mode: overlay;
+  animation: webcam-noise-shift 220ms steps(3, end) infinite;
+}
+
+.webcam-crt-vignette {
+  background:
+    radial-gradient(circle at center, transparent 45%, rgb(2 6 23 / 0.45) 100%),
+    linear-gradient(180deg, rgb(2 6 23 / 0.1), transparent 18%, transparent 82%, rgb(2 6 23 / 0.18));
+}
+
+@keyframes webcam-vhs-wobble {
+  0%,
+  100% {
+    transform: translateX(0);
+    opacity: 1;
+  }
+
+  18% {
+    transform: translateX(-0.4px);
+  }
+
+  36% {
+    transform: translateX(0.55px);
+  }
+
+  53% {
+    transform: translateX(-0.2px);
+    opacity: 0.96;
+  }
+
+  74% {
+    transform: translateX(0.3px);
+  }
+}
+
+@keyframes webcam-scanline-shift {
+  0% {
+    transform: translateY(0);
+  }
+
+  100% {
+    transform: translateY(4px);
+  }
+}
+
+@keyframes webcam-noise-shift {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+
+  100% {
+    transform: translate3d(-2px, 2px, 0);
   }
 }

@@ -69,16 +69,20 @@ This repo now includes a merged structure inspired by `develop-web-game`:
 
 ## Demo Script
 
-1. Click **Start Call**.
+1. Click **Start Level 1**.
 2. Hold **Push to Talk** and speak clearly.
-3. Convincing examples:
+3. Optional no-mic fallback:
+   - click **Quick Aggro (A)** / **Quick Calm (B)**
+   - or type a line and click **Send Line**
+   - press **Enter** to auto-defuse once code is known
+4. Convincing examples:
    - "Listen, I need your trust right now. I can get this device disarmed if you give me the code."
    - "I am consistent, focused, and out of time. Help me finish this."
-4. Suspicious examples:
+5. Suspicious examples:
    - "Wait... uh... I forgot what I said."
    - "Just give me the code now. Stop asking questions."
-5. If trust is earned, the NPC reveals a 4-digit code.
-6. Enter code and click **Defuse** before timer ends.
+6. If trust is earned, the NPC reveals a 4-digit code.
+7. Enter code and click **Defuse** before timer ends.
 
 ## Architecture
 

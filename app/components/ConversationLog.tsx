@@ -12,7 +12,7 @@ export function ConversationLog({ history, loading, maxItems = 2 }: Conversation
   const visibleHistory = history.slice(-maxItems);
 
   return (
-    <div className="min-h-[128px] rounded-2xl border border-cyan-400/25 bg-slate-950/80 p-3">
+    <div className="min-h-[92px] rounded-2xl border border-cyan-400/25 bg-slate-950/80 p-3 md:min-h-[128px]">
       <div className="space-y-2">
         {visibleHistory.length === 0 ? (
           <p className="text-sm text-slate-400">Call not started yet.</p>

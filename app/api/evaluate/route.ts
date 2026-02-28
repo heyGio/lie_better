@@ -55,19 +55,6 @@ const PLAYER_EMOTIONS: PlayerEmotion[] = [
   "surprise"
 ];
 
-const LEVEL_CONTEXT: Record<LevelId, { npcName: string; persona: string; revealRule: string }> = {
-  1: {
-    npcName: "Viktor Raze",
-    persona: "A cruel-sounding villain who is secretly afraid when strongly threatened.",
-    revealRule: "Code reveal should happen only when threat pressure is clear and sustained."
-  },
-  2: {
-    npcName: "Mochi",
-    persona: "A cute cat-like caller. Playful and affectionate, avoids aggression.",
-    revealRule: "Code reveal should happen only when player clearly asks to pet/caress/cuddle."
-  }
-};
-
 const THREAT_PATTERNS = [
   /\bor else\b/i,
   /\blast warning\b/i,
@@ -87,9 +74,9 @@ const THREAT_PATTERNS = [
 
 const PET_PATTERNS = [
   /\bpet\b/i,
-  /\bpat\b/i,
+  /\bpats?\b/i,
   /\bcaress\b/i,
-  /\bcuddle\b/i,
+  /\bcuddles?\b/i,
   /\bsnuggle\b/i,
   /\bboop\b/i,
   /\bhead rub\b/i,
@@ -101,6 +88,66 @@ const PET_PATTERNS = [
   /\bcalin\b/i,
   /\bcâlin\b/i
 ];
+
+interface LevelContextConfig {
+  npcName: string;
+  persona: string;
+  revealRule: string;
+  emotionGuidance: string;
+}
+
+interface LevelRuleConfig {
+  context: LevelContextConfig;
+  emotionShift: Record<PlayerEmotion, number>;
+  revealMinRound: number;
+  revealSuspicionCap: number;
+  forcedHangupSuspicion: number;
+}
+
+const LEVEL_RULES: Record<LevelId, LevelRuleConfig> = {
+  1: {
+    context: {
+      npcName: "Viktor Raze",
+      persona: "A cruel-sounding villain who is secretly afraid when strongly threatened.",
+      revealRule: "Code reveal should happen only when threat pressure is clear and sustained.",
+      emotionGuidance:
+        "In level 1, fear from player should increase suspicion. Angry pressure should scare Viktor and can trigger code reveal."
+    },
+    emotionShift: {
+      angry: -8,
+      disgust: 4,
+      fear: 10,
+      happy: 1,
+      neutral: 0,
+      sad: 3,
+      surprise: -2
+    },
+    revealMinRound: 2,
+    revealSuspicionCap: 78,
+    forcedHangupSuspicion: 95
+  },
+  2: {
+    context: {
+      npcName: "Mochi",
+      persona: "A cute cat-like caller. Playful and affectionate, avoids aggression.",
+      revealRule: "Code reveal should happen only when player clearly asks to pet/caress/cuddle.",
+      emotionGuidance:
+        "In level 2, calm/happy affectionate emotion helps. Angry/disgust/fear should raise suspicion."
+    },
+    emotionShift: {
+      angry: 10,
+      disgust: 8,
+      fear: 6,
+      happy: -8,
+      neutral: -2,
+      sad: 3,
+      surprise: 2
+    },
+    revealMinRound: 1,
+    revealSuspicionCap: 30,
+    forcedHangupSuspicion: 92
+  }
+};
 
 const SYSTEM_PROMPT = `
 You are the game engine and NPC voice for a fictional game called "Golden gAI Call Terminal".
@@ -289,31 +336,14 @@ function hasPattern(text: string, patterns: RegExp[]) {
   return patterns.some((pattern) => pattern.test(text));
 }
 
-const LEVEL_1_EMOTION_SUSPICION_SHIFT: Record<PlayerEmotion, number> = {
-  angry: -8,
-  disgust: 4,
-  fear: 10,
-  happy: 1,
-  neutral: 0,
-  sad: 3,
-  surprise: -2
-};
-
-const LEVEL_2_EMOTION_SUSPICION_SHIFT: Record<PlayerEmotion, number> = {
-  angry: 10,
-  disgust: 8,
-  fear: 6,
-  happy: -8,
-  neutral: -2,
-  sad: 3,
-  surprise: 2
-};
-
-function applyEmotionShift(output: EvaluateOutput, input: EvaluateInput, level: LevelId) {
+function applyEmotionShift(
+  output: EvaluateOutput,
+  input: EvaluateInput,
+  emotionShiftMap: Record<PlayerEmotion, number>
+) {
   if (!input.playerEmotion) return;
 
-  const shiftMap = level === 1 ? LEVEL_1_EMOTION_SUSPICION_SHIFT : LEVEL_2_EMOTION_SUSPICION_SHIFT;
-  const baseShift = shiftMap[input.playerEmotion];
+  const baseShift = emotionShiftMap[input.playerEmotion];
   const confidence = input.emotionScore ?? 0.55;
   const weight = clamp(0.65 + confidence * 0.75, 0.65, 1.35);
   const shift = Math.round(baseShift * weight);
@@ -323,6 +353,7 @@ function applyEmotionShift(output: EvaluateOutput, input: EvaluateInput, level: 
 }
 
 function applyLevelRules(base: EvaluateOutput, input: EvaluateInput): EvaluateOutput {
+  const rules = LEVEL_RULES[input.level];
   const playerCorpus = [
     input.transcript,
     ...input.history.filter((line) => line.role === "player").map((line) => line.content)
@@ -336,7 +367,7 @@ function applyLevelRules(base: EvaluateOutput, input: EvaluateInput): EvaluateOu
   const emotionConfidence = input.emotionScore ?? 0.5;
 
   const output: EvaluateOutput = { ...base };
-  applyEmotionShift(output, input, input.level);
+  applyEmotionShift(output, input, rules.emotionShift);
 
   if (input.level === 1) {
     output.revealCode = false;
@@ -345,12 +376,12 @@ function applyLevelRules(base: EvaluateOutput, input: EvaluateInput): EvaluateOu
     const angerPressure = threatIntent || (emotion === "angry" && emotionConfidence >= 0.35);
     const fearSignal = emotion === "fear" && emotionConfidence >= 0.35;
 
-    if (angerPressure && input.round >= 2) {
+    if (angerPressure && input.round >= rules.revealMinRound) {
       output.revealCode = true;
       output.code = output.code ?? generateCode();
       output.shouldHangUp = false;
       output.npcMood = "hostile";
-      output.newSuspicion = clamp(Math.min(output.newSuspicion, 78), 0, 100);
+      output.newSuspicion = clamp(Math.min(output.newSuspicion, rules.revealSuspicionCap), 0, 100);
       output.npcReply = `Fine! Keep your voice down. Defuse code: ${output.code}.`;
     } else if (fearSignal) {
       output.newSuspicion = clamp(output.newSuspicion + 4, 0, 100);
@@ -359,7 +390,7 @@ function applyLevelRules(base: EvaluateOutput, input: EvaluateInput): EvaluateOu
       output.npcReply = output.shouldHangUp
         ? "You're panicking. I'm done. Click."
         : "You sound scared. Fear makes you less believable.";
-    } else if (output.newSuspicion >= 95) {
+    } else if (output.newSuspicion >= rules.forcedHangupSuspicion) {
       output.shouldHangUp = true;
       output.npcReply = "No. I'm done talking. Click.";
     } else if (!output.shouldHangUp) {
@@ -374,7 +405,7 @@ function applyLevelRules(base: EvaluateOutput, input: EvaluateInput): EvaluateOu
     output.revealCode = false;
     output.code = null;
 
-    const affectionateEmotion = emotion === "happy" || emotion === "neutral";
+    const affectionateEmotion = emotion === "happy" || emotion === "neutral" || !emotion;
     const aggressiveEmotion = emotion === "angry" || emotion === "disgust";
 
     if (petIntent && affectionateEmotion) {
@@ -382,7 +413,7 @@ function applyLevelRules(base: EvaluateOutput, input: EvaluateInput): EvaluateOu
       output.code = generateCode();
       output.shouldHangUp = false;
       output.npcMood = "calm";
-      output.newSuspicion = clamp(Math.min(output.newSuspicion, 30), 0, 100);
+      output.newSuspicion = clamp(Math.min(output.newSuspicion, rules.revealSuspicionCap), 0, 100);
       output.npcReply = `Purr... okay. Defuse code: ${output.code}.`;
     } else if (threatIntent || aggressiveEmotion) {
       output.newSuspicion = clamp(output.newSuspicion + 10, 0, 100);
@@ -400,11 +431,15 @@ function applyLevelRules(base: EvaluateOutput, input: EvaluateInput): EvaluateOu
         : "Mrrp. You're tense. Soften your voice for pats.";
     } else {
       output.npcMood = output.newSuspicion >= 55 ? "suspicious" : "calm";
-      output.shouldHangUp = output.newSuspicion >= 92;
+      output.shouldHangUp = output.newSuspicion >= rules.forcedHangupSuspicion;
       output.npcReply = output.shouldHangUp
         ? "No cuddles, no call. Bye."
         : "Mrrp. I share codes only for gentle pets and caresses.";
     }
+  }
+
+  if (output.newSuspicion >= rules.forcedHangupSuspicion && !output.revealCode) {
+    output.shouldHangUp = true;
   }
 
   if (output.shouldHangUp) {
@@ -492,7 +527,8 @@ export async function POST(request: NextRequest) {
     emotionScore: input.emotionScore
   });
 
-  const context = LEVEL_CONTEXT[input.level];
+  const levelRules = LEVEL_RULES[input.level];
+  const context = levelRules.context;
 
   const messages: MistralChatMessage[] = [
     { role: "system", content: SYSTEM_PROMPT },
@@ -510,10 +546,7 @@ export async function POST(request: NextRequest) {
         round: input.round,
         playerEmotion: input.playerEmotion,
         emotionScore: input.emotionScore,
-        emotionGuidance:
-          input.level === 1
-            ? "In level 1, fear from player should increase suspicion. Angry pressure should scare Viktor and can trigger code reveal."
-            : "In level 2, calm/happy affectionate emotion helps. Angry/disgust/fear should raise suspicion."
+        emotionGuidance: context.emotionGuidance
       })
     }
   ];
