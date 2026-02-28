@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { CodeEntry } from "@/app/components/CodeEntry";
 import { ConversationLog } from "@/app/components/ConversationLog";
@@ -148,6 +148,20 @@ function parseEmotionScores(payload: unknown): EmotionScores | null {
   return hasValue ? scores : null;
 }
 
+function mapSingleEmotionScore(emotion: PlayerEmotion | null, score: number | null): EmotionScores | null {
+  if (!emotion || typeof score !== "number" || !Number.isFinite(score) || score <= 0) return null;
+  const clamped = clamp(score, 0, 1);
+  return {
+    angry: emotion === "angry" ? clamped : 0,
+    disgust: emotion === "disgust" ? clamped : 0,
+    fear: emotion === "fear" ? clamped : 0,
+    happy: emotion === "happy" ? clamped : 0,
+    neutral: emotion === "neutral" ? clamped : 0,
+    sad: emotion === "sad" ? clamped : 0,
+    surprise: emotion === "surprise" ? clamped : 0
+  };
+}
+
 function shouldIgnoreSpaceHotkey(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false;
   if (target.isContentEditable) return true;
@@ -172,6 +186,12 @@ export default function Home() {
   const [lastEmotion, setLastEmotion] = useState<PlayerEmotion | null>(null);
   const [lastEmotionScore, setLastEmotionScore] = useState<number | null>(null);
   const [lastEmotionScores, setLastEmotionScores] = useState<EmotionScores | null>(null);
+  const [faceEmotion, setFaceEmotion] = useState<PlayerEmotion | null>(null);
+  const [faceEmotionScore, setFaceEmotionScore] = useState<number | null>(null);
+  const [faceEmotionScores, setFaceEmotionScores] = useState<EmotionScores | null>(null);
+  const [webcamSupported, setWebcamSupported] = useState<boolean>(false);
+  const [webcamEnabled, setWebcamEnabled] = useState<boolean>(false);
+  const [webcamError, setWebcamError] = useState<string>("");
   const [, setLiveTranscript] = useState<string>("");
   const [, setDraftTranscript] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
@@ -189,6 +209,8 @@ export default function Home() {
   const partialLastRunAtRef = useRef<number>(0);
   const npcAudioRef = useRef<HTMLAudioElement | null>(null);
   const npcAudioUrlRef = useRef<string | null>(null);
+  const webcamVideoRef = useRef<HTMLVideoElement | null>(null);
+  const webcamStreamRef = useRef<MediaStream | null>(null);
   const thinkingPulseIntervalRef = useRef<number | null>(null);
   const thinkingPulseTimeoutRef = useRef<number | null>(null);
   const thinkingAudioContextRef = useRef<AudioContext | null>(null);
@@ -205,6 +227,62 @@ export default function Home() {
     stream.getTracks().forEach((track) => track.stop());
     mediaStreamRef.current = null;
   }, []);
+
+  const stopWebcam = useCallback(() => {
+    const stream = webcamStreamRef.current;
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop());
+      webcamStreamRef.current = null;
+    }
+
+    if (webcamVideoRef.current) {
+      webcamVideoRef.current.srcObject = null;
+    }
+
+    setWebcamEnabled(false);
+  }, []);
+
+  const startWebcam = useCallback(async () => {
+    if (!webcamSupported || gameStatus !== "playing") return;
+
+    try {
+      if (webcamStreamRef.current) {
+        if (webcamVideoRef.current && webcamVideoRef.current.srcObject !== webcamStreamRef.current) {
+          webcamVideoRef.current.srcObject = webcamStreamRef.current;
+          void webcamVideoRef.current.play().catch(() => {
+            // Ignore autoplay policy issues.
+          });
+        }
+        setWebcamEnabled(true);
+        return;
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "user",
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        },
+        audio: false
+      });
+
+      webcamStreamRef.current = stream;
+      if (webcamVideoRef.current) {
+        webcamVideoRef.current.srcObject = stream;
+        void webcamVideoRef.current.play().catch(() => {
+          // Ignore autoplay policy issues.
+        });
+      }
+
+      setWebcamError("");
+      setWebcamEnabled(true);
+      console.info("📹  [Webcam] User webcam ready (zoom feed active)");
+    } catch (error) {
+      console.warn("⚠️  [Webcam] Unable to start webcam", error);
+      setWebcamEnabled(false);
+      setWebcamError("Webcam unavailable or permission denied.");
+    }
+  }, [gameStatus, webcamSupported]);
 
   const stopRecording = useCallback((discard: boolean = false) => {
     const recorder = mediaRecorderRef.current;
@@ -669,6 +747,10 @@ export default function Home() {
       setLastEmotion(null);
       setLastEmotionScore(null);
       setLastEmotionScores(null);
+      setFaceEmotion(null);
+      setFaceEmotionScore(null);
+      setFaceEmotionScores(null);
+      setWebcamError("");
       setLiveTranscript("");
       setDraftTranscript("");
       setMicError("");
@@ -684,13 +766,42 @@ export default function Home() {
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const hasMediaRecorder =
-      typeof window.MediaRecorder !== "undefined" &&
-      !!navigator.mediaDevices &&
-      typeof navigator.mediaDevices.getUserMedia === "function";
+    const hasGetUserMedia =
+      !!navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === "function";
+    const hasMediaRecorder = typeof window.MediaRecorder !== "undefined" && hasGetUserMedia;
 
     setRecordingSupported(hasMediaRecorder);
+    setWebcamSupported(hasGetUserMedia);
   }, []);
+
+  useEffect(() => {
+    if (gameStatus !== "playing") {
+      stopWebcam();
+      setFaceEmotion(null);
+      setFaceEmotionScore(null);
+      setFaceEmotionScores(null);
+      return;
+    }
+
+    if (webcamSupported && !webcamEnabled) {
+      void startWebcam();
+    }
+  }, [gameStatus, startWebcam, stopWebcam, webcamEnabled, webcamSupported]);
+
+  useEffect(() => {
+    if (gameStatus !== "playing" || !webcamEnabled) return;
+
+    // Placeholder hook for future face-model inference loop.
+    // Next step: capture frames and call a face-emotion endpoint/model.
+    const interval = window.setInterval(() => {
+      // Keep a stable baseline signal so the blend panel can show a voice+face structure.
+      setFaceEmotion((current) => current ?? "neutral");
+      setFaceEmotionScore((current) => current ?? 0.34);
+      setFaceEmotionScores((current) => current ?? mapSingleEmotionScore("neutral", 0.34));
+    }, 1500);
+
+    return () => window.clearInterval(interval);
+  }, [gameStatus, webcamEnabled]);
 
   useEffect(() => {
     if (gameStatus !== "playing") return;
@@ -714,6 +825,7 @@ export default function Home() {
       stopNpcVoice();
       stopThinkingPulse();
       releaseMicrophone();
+      stopWebcam();
       if (thinkingAudioContextRef.current) {
         void thinkingAudioContextRef.current.close().catch(() => {
           // Ignore close failures.
@@ -721,13 +833,14 @@ export default function Home() {
         thinkingAudioContextRef.current = null;
       }
     };
-  }, [releaseMicrophone, stopNpcVoice, stopRecording, stopThinkingPulse]);
+  }, [releaseMicrophone, stopNpcVoice, stopRecording, stopThinkingPulse, stopWebcam]);
 
   const handleResetToIdle = () => {
     stopRecording(true);
     stopNpcVoice();
     stopThinkingPulse();
     releaseMicrophone();
+    stopWebcam();
     setCurrentLevel(1);
     setGameStatus("idle");
     setTimeRemaining(START_TIME);
@@ -740,6 +853,10 @@ export default function Home() {
     setLastEmotion(null);
     setLastEmotionScore(null);
     setLastEmotionScores(null);
+    setFaceEmotion(null);
+    setFaceEmotionScore(null);
+    setFaceEmotionScores(null);
+    setWebcamError("");
     setLiveTranscript("");
     setDraftTranscript("");
     setMicError("");
@@ -939,11 +1056,51 @@ export default function Home() {
     }
   };
 
-  const sortedEmotionScores = lastEmotionScores
+  const voiceScoreMap = useMemo(
+    () => lastEmotionScores ?? mapSingleEmotionScore(lastEmotion, lastEmotionScore),
+    [lastEmotion, lastEmotionScore, lastEmotionScores]
+  );
+
+  const faceScoreMap = useMemo(
+    () => faceEmotionScores ?? mapSingleEmotionScore(faceEmotion, faceEmotionScore),
+    [faceEmotion, faceEmotionScore, faceEmotionScores]
+  );
+
+  const blendedEmotionScores = useMemo(() => {
+    if (!voiceScoreMap && !faceScoreMap) return null;
+
+    const merged: EmotionScores = {
+      angry: 0,
+      disgust: 0,
+      fear: 0,
+      happy: 0,
+      neutral: 0,
+      sad: 0,
+      surprise: 0
+    };
+
+    for (const emotion of PLAYER_EMOTIONS) {
+      const voice = voiceScoreMap?.[emotion] ?? 0;
+      const face = faceScoreMap?.[emotion] ?? 0;
+
+      merged[emotion] =
+        voiceScoreMap && faceScoreMap
+          ? clamp(voice * 0.62 + face * 0.38, 0, 1)
+          : clamp(voice + face, 0, 1);
+    }
+
+    return merged;
+  }, [faceScoreMap, voiceScoreMap]);
+
+  const sortedEmotionScores = blendedEmotionScores
     ? [...PLAYER_EMOTIONS]
-        .map((emotion) => ({ emotion, score: lastEmotionScores[emotion] ?? 0 }))
+        .map((emotion) => ({ emotion, score: blendedEmotionScores[emotion] ?? 0 }))
         .sort((a, b) => b.score - a.score)
     : [];
+
+  const blendedEmotion = sortedEmotionScores[0]?.emotion ?? null;
+  const blendedEmotionScore = sortedEmotionScores[0]?.score ?? null;
+  const blendModeLabel = voiceScoreMap && faceScoreMap ? "voice + face" : voiceScoreMap ? "voice only" : faceScoreMap ? "face only" : "no signal";
 
   return (
     <main className="relative h-screen overflow-hidden px-2 py-2 md:px-4 md:py-3">
@@ -1068,6 +1225,55 @@ export default function Home() {
                 <Meters suspicion={suspicion} />
               </div>
 
+              <div className="holo-outline space-y-2 p-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs uppercase tracking-[0.15em] text-cyan-300">Human Cam (Zoom)</p>
+                  <p className="text-[11px] uppercase tracking-[0.08em] text-slate-400">
+                    {webcamEnabled ? "Live" : "Offline"}
+                  </p>
+                </div>
+
+                <div className="relative overflow-hidden rounded-xl border border-cyan-400/25 bg-slate-950/80">
+                  <div className="aspect-[4/3] w-full">
+                    {webcamEnabled ? (
+                      <video
+                        ref={webcamVideoRef}
+                        muted
+                        playsInline
+                        autoPlay
+                        className="h-full w-full object-cover"
+                        style={{ transform: "scale(1.35) scaleX(-1)" }}
+                      />
+                    ) : (
+                      <div className="flex h-full items-center justify-center text-xs uppercase tracking-[0.12em] text-slate-500">
+                        Webcam feed unavailable
+                      </div>
+                    )}
+                  </div>
+                  <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950/90 to-transparent px-2 py-1 text-[10px] uppercase tracking-[0.1em] text-cyan-200">
+                    Face signal pipeline ready
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between text-[11px] text-slate-400">
+                  <span>{webcamError || "Facial model: baseline stub (neutral) pending live analyzer."}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (webcamEnabled) {
+                        stopWebcam();
+                        return;
+                      }
+                      setWebcamError("");
+                      void startWebcam();
+                    }}
+                    className="rounded-md border border-cyan-400/35 px-2 py-1 text-cyan-300 transition hover:bg-cyan-400/10"
+                  >
+                    {webcamEnabled ? "Disable" : "Enable"}
+                  </button>
+                </div>
+              </div>
+
               <ConversationLog history={history} loading={busy} maxItems={2} />
 
               <div className="holo-outline space-y-2 p-3">
@@ -1083,11 +1289,17 @@ export default function Home() {
                         : "Idle"}
                   </p>
                 </div>
-                {lastEmotion ? (
+                {lastEmotion || faceEmotion || blendedEmotion ? (
                   <p className="rounded-lg border border-amber-400/25 bg-amber-500/10 px-2 py-1 text-xs uppercase tracking-[0.12em] text-amber-200">
-                    Detected: {lastEmotion}
-                    {typeof lastEmotionScore === "number"
-                      ? ` (${Math.round(lastEmotionScore * 100)}%)`
+                    Voice: {lastEmotion ?? "n/a"}
+                    {typeof lastEmotionScore === "number" ? ` (${Math.round(lastEmotionScore * 100)}%)` : ""}
+                    {"  •  "}
+                    Face: {faceEmotion ?? "n/a"}
+                    {typeof faceEmotionScore === "number" ? ` (${Math.round(faceEmotionScore * 100)}%)` : ""}
+                    {"  •  "}
+                    Blend: {blendedEmotion ?? "n/a"}
+                    {typeof blendedEmotionScore === "number"
+                      ? ` (${Math.round(blendedEmotionScore * 100)}%)`
                       : ""}
                   </p>
                 ) : (
@@ -1095,6 +1307,7 @@ export default function Home() {
                     No emotion sample yet.
                   </p>
                 )}
+                <p className="text-[11px] uppercase tracking-[0.08em] text-slate-500">Blend mode: {blendModeLabel}</p>
                 {sortedEmotionScores.length > 0 ? (
                   <div className="grid grid-cols-2 gap-1 text-[11px]">
                     {sortedEmotionScores.map((entry) => (
