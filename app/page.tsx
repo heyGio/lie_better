@@ -54,9 +54,9 @@ interface EvaluateResponse {
   failureReason?: string | null;
 }
 
-const START_TIME = 60;
+const START_TIME = 120;
 const START_SUSPICION = 50;
-const OPENING_LINE = "Who is this? You have 60 seconds. Talk.";
+const OPENING_LINE = "Who is this? You have 2 minutes. Talk.";
 const DARKEN_DELAY_MS = 180;
 const OPENING_LINE_DELAY_MS = 980;
 const TALK_READY_DELAY_MS = 1720;
