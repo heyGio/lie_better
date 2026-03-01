@@ -573,3 +573,70 @@ Original prompt: Build and iterate a playable web game in this workspace, valida
 ## 2026-03-01 - Validation (gemini-2.5-flash switch)
 
 - `npx tsc --noEmit` ✅
+
+## 2026-03-01 - Gemini "no valid emotion label" Hardening
+
+- Fixed intermittent parse failures where model returns preface text like `Here is the JSON requested:` before payload.
+- Updated `lib/gemini-emotion.ts`:
+  - parser now tries additional object candidates (greedy + tight JSON object extraction).
+  - added explicit key-pattern extraction fallback for `emotion|label|playerEmotion` fields in loose text.
+  - prompt strengthened to demand JSON-only with no preface/markdown.
+  - added `responseJsonSchema` to bias model output toward strict object with required `emotion` field.
+  - retry policy now also retries once on `no valid emotion label` errors.
+
+## 2026-03-01 - Validation (no valid label hardening)
+
+- `npx tsc --noEmit` ✅
+
+## 2026-03-01 - Gemini Preface/Partial JSON Recovery Fix
+
+- Addressed intermittent error:
+  - `Gemini returned no valid emotion label. Raw: Here is the JSON...`
+- Updated `lib/gemini-emotion.ts`:
+  - added robust loose-text label extractor for preface/non-strict responses.
+  - if primary JSON parse fails with `no valid emotion label` / `no parsable response content`, performs automatic second Gemini pass on the same audio with a strict `label-only` prompt.
+  - maps label-only fallback into game score map with default confidence `0.55`.
+- Updated recoverable error guards so this case no longer blocks transcript fallback:
+  - `app/page.tsx`
+  - `app/api/transcribe/route.ts`
+
+## 2026-03-01 - Validation (preface/partial JSON recovery)
+
+- `npx tsc --noEmit` ✅
+
+## 2026-03-01 - Full Google AI Removal + Local SpeechBrain Revert (User Requested)
+
+- Removed all Gemini/Google AI emotion-inference code paths.
+- Deleted Gemini client module:
+  - removed `lib/gemini-emotion.ts`
+- Added new local emotion client wired to FastAPI:
+  - `lib/local-emotion.ts`
+  - expects local API at `EMOTION_LOCAL_URL` (default: `http://127.0.0.1:5050`)
+  - parses HF-like prediction shape and maps labels to in-game set (`angry|disgust|fear|happy|neutral|sad|surprise`)
+- Rewired transcribe API route:
+  - `app/api/transcribe/route.ts` now imports from `@/lib/local-emotion`
+  - response `emotionSource` now emits `"local-fastapi"`
+  - logs now explicitly mention local speech emotion service
+- Rewired front-end parsing/logging:
+  - `app/page.tsx` `emotionSource` type switched to `"local-fastapi"`
+  - removed Gemini-specific recoverable-error logic
+  - if local emotion API fails, transcript fallback remains active with clear info log
+- Migrated local FastAPI service model implementation:
+  - `services/emotion/serve.py` now uses `speechbrain/emotion-recognition-wav2vec2-IEMOCAP`
+  - switched from transformers pipeline to SpeechBrain `foreign_class`
+  - preserves `/classify` output shape compatibility (`[[{label, score}, ...]]`)
+  - kept user-friendly emoji logs and robust audio normalization path (librosa + ffmpeg fallback)
+- Updated Python deps:
+  - `services/emotion/requirements.txt` now includes `speechbrain>=1.0.2`
+  - removed `transformers` dependency
+- Removed Google env/docs references:
+  - `.env` switched to `EMOTION_LOCAL_URL` + `EMOTION_MODEL`
+  - `.env.example` switched to local SpeechBrain env vars
+  - `README.md` updated to local FastAPI architecture and run instructions
+- Removed npm Google AI dependency:
+  - uninstalled `@google/genai` (updated `package.json` and lockfile)
+
+## 2026-03-01 - Validation (Google removal + local revert)
+
+- `npx tsc --noEmit` ✅
+- grep check for Gemini/Google code references in active files ✅ (none found)

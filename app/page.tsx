@@ -20,7 +20,7 @@ interface TranscribeResponse {
   emotionScore?: number | null;
   emotionScores?: Partial<Record<PlayerEmotion, number>> | null;
   emotionModel?: string | null;
-  emotionSource?: "gemini" | null;
+  emotionSource?: "local-fastapi" | null;
   emotionError?: string | null;
   error?: string;
 }
@@ -31,7 +31,7 @@ interface TranscriptionResult {
   emotionScore: number | null;
   emotionScores: EmotionScores | null;
   emotionModel: string | null;
-  emotionSource: "gemini" | null;
+  emotionSource: "local-fastapi" | null;
   emotionError: string | null;
 }
 
@@ -212,18 +212,6 @@ function inferEmotionFromTranscript(transcript: string): {
   }
 
   return { emotion: null, score: null, scores: null };
-}
-
-function isRecoverableEmotionErrorMessage(raw: string | null | undefined) {
-  if (typeof raw !== "string") return false;
-  const normalized = raw.trim().toLowerCase();
-  if (!normalized) return false;
-
-  if (/no\s+pars(?:e)?able\s+response\s+content/i.test(normalized)) return true;
-  if (normalized.includes("cannot extract voices from a non-audio request")) return true;
-  if (normalized.includes("code 1007")) return true;
-
-  return false;
 }
 
 function shouldIgnoreHotkey(target: EventTarget | null) {
@@ -548,7 +536,7 @@ export default function Home() {
       emotionScore: typeof payload.emotionScore === "number" ? payload.emotionScore : null,
       emotionScores: parseEmotionScores(payload.emotionScores),
       emotionModel: typeof payload.emotionModel === "string" ? payload.emotionModel : null,
-      emotionSource: payload.emotionSource === "gemini" ? "gemini" : null,
+      emotionSource: payload.emotionSource === "local-fastapi" ? "local-fastapi" : null,
       emotionError: typeof payload.emotionError === "string" ? payload.emotionError : null
     };
   }, []);
@@ -783,9 +771,7 @@ export default function Home() {
           const result = await transcribeBlob(audioBlob);
           if (recordingSessionRef.current !== sessionId) return;
 
-          const isRecoverableEmotionGap = isRecoverableEmotionErrorMessage(result.emotionError);
-          const shouldUseTextFallback =
-            !result.emotion && (!result.emotionError || isRecoverableEmotionGap);
+          const shouldUseTextFallback = !result.emotion;
           const fallback = shouldUseTextFallback
             ? inferEmotionFromTranscript(result.transcript)
             : { emotion: null, score: null, scores: null };
@@ -793,20 +779,14 @@ export default function Home() {
           const finalEmotionScore = result.emotionScore ?? fallback.score;
           const finalEmotionScores = result.emotionScores ?? fallback.scores;
           const emotionSource = result.emotion
-            ? "gemini"
+            ? "local-fastapi"
             : shouldUseTextFallback
               ? "fallback-text"
               : "none";
 
-          if (!result.emotion && result.emotionError && !isRecoverableEmotionGap) {
-            const friendlyError = "Emotion model unavailable. Check Gemini API key/config on server.";
-            setMicError(friendlyError);
-            console.warn("⚠️  [Emotion] Gemini unavailable, skipping transcript fallback", {
-              emotionError: result.emotionError
-            });
-          } else if (!result.emotion && isRecoverableEmotionGap) {
+          if (!result.emotion && result.emotionError) {
             setMicError("");
-            console.info("ℹ️  [Emotion] Gemini returned empty payload, using transcript fallback", {
+            console.info("ℹ️  [Emotion] Local emotion service unavailable, using transcript fallback", {
               emotionError: result.emotionError
             });
           }

@@ -13,7 +13,7 @@ Team: **Golden gAI**
 - Mistral API (server-side only)
 - ElevenLabs TTS for Level 1 NPC voice replies
   - Voice tone is dynamically adapted from NPC suspicion/mood
-- Gemini API speech emotion recognition (`gemini-2.5-flash`)
+- Local FastAPI speech emotion recognition (`speechbrain/emotion-recognition-wav2vec2-IEMOCAP`)
   - Player audio emotion influences NPC behavior per level
 
 ## Quick Start
@@ -46,15 +46,22 @@ ELEVENLABS_MODEL_ID=eleven_flash_v2_5
 ELEVENLABS_VOICE_ID=zYcjlYFOd3taleS0gkk3
 ELEVENLABS_OUTPUT_FORMAT=mp3_22050_32
 ELEVENLABS_OPTIMIZE_STREAMING_LATENCY=4
-GEMINI_API_KEY=YOUR_KEY_HERE
-GEMINI_EMOTION_MODEL=gemini-2.5-flash
+EMOTION_LOCAL_URL=http://127.0.0.1:5050
+EMOTION_MODEL=speechbrain/emotion-recognition-wav2vec2-IEMOCAP
 ```
 
-Gemini API key aliases also accepted:
+Launch local emotion API (separate process):
 
 ```bash
-GOOGLE_API_KEY=YOUR_KEY_HERE
-GOOGLE_GENERATIVE_AI_API_KEY=YOUR_KEY_HERE
+cd /home/martin/lie_better/services/emotion
+pip install -r requirements.txt
+python serve.py --host 0.0.0.0 --port 5050
+```
+
+Or open it in a dedicated live-log window:
+
+```bash
+gnome-terminal -- bash -lc 'cd /home/martin/lie_better/services/emotion && pip install -r requirements.txt && python serve.py --host 0.0.0.0 --port 5050; exec bash'
 ```
 
 ## Scripts
@@ -102,7 +109,7 @@ This repo now includes a merged structure inspired by `develop-web-game`:
     |
     | (parallel on final recording)
     v
-[Gemini Audio Emotion]
+[Local FastAPI Audio Emotion]
     |
     | transcript + detected emotion
     v
@@ -133,7 +140,7 @@ This repo now includes a merged structure inspired by `develop-web-game`:
 
 - `GET /api/health` -> `{ "ok": true }`
 - `POST /api/transcribe` -> returns voice transcript from audio using Mistral
-  - on final turn, also returns emotion (`angry|disgust|fear|happy|neutral|sad|surprise`) from Gemini API
+  - on final turn, also returns emotion (`angry|disgust|fear|happy|neutral|sad|surprise`) from local FastAPI SpeechBrain service
 - `GET /api/tts` -> low-latency streaming level-1 NPC voice audio using ElevenLabs
 - `POST /api/tts` -> non-streaming fallback level-1 NPC voice audio
 - `POST /api/evaluate` -> returns:
@@ -147,7 +154,7 @@ This repo now includes a merged structure inspired by `develop-web-game`:
 - MediaRecorder support varies by browser/platform.
 - Some browsers require secure context and explicit microphone permission.
 - Browser autoplay policies can block speech playback until user interaction.
-- `ffmpeg` must be available on the server VM (used to normalize mic audio before Gemini analysis).
+- `ffmpeg` must be available on the server VM (used to normalize mic audio for the local emotion service).
 - Emotion inference quality depends on microphone quality, noise, and accent/domain mismatch.
 
 ## Safety Note
