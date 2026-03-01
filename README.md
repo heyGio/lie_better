@@ -7,6 +7,10 @@ The current build includes two playable scenarios:
 - Level 1: a hostile caller who only cracks if you perform the required emotional beats.
 - Level 2: Mochi, a mischievous cat in Shibuya who stole your Suica card and reacts to warmth, sadness, and player intent.
 
+## Context
+
+This project has been developed for the Mistral Worldwide Hackathon - Tokyo: a 32-hours hackathon hosted at Google for Startups offices in Shibuya, organized by Mistral AI. The team was composed by three hackers out of the 700 selected out of more than 7000 applicants in the 7 cities that hosted this hackathon at the same time.
+
 ## Why This Project Exists
 
 This repo experiments with a simple game loop powered by three signals at once:
