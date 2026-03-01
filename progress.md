@@ -291,3 +291,15 @@ Original prompt: Build and iterate a playable web game in this workspace, valida
 ## 2026-03-01 - Validation (Level 2 Timer Badge Move)
 
 - `npx tsc --noEmit` ✅
+
+## 2026-03-01 - Level 2 Lose SFX Train (User Requested)
+
+- Added level-2 lose SFX routing in `app/page.tsx`:
+  - primary source: `/assets/train.wav`
+  - automatic fallback: `/assets/train.mp3` when `.wav` is missing/unplayable.
+- Kept level-1 explosion SFX unchanged (`/assets/booom.mp3`).
+- Added user-friendly emoji logs for playback success/failure and fallback attempts.
+
+## 2026-03-01 - Validation (Level 2 Lose Train SFX)
+
+- `npx tsc --noEmit` ✅

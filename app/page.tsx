@@ -66,6 +66,8 @@ const BOMB_TIMER_APPEAR_DELAY_MS = 2000;
 const BOMB_TICK_VOLUME = 0.3;
 const LEVEL1_BGM_SRC = "/assets/Concrete_Empire_2026-02-28T212713.mp3";
 const LEVEL2_BGM_SRC = "/assets/Phantom_Yamanote.mp3";
+const LEVEL2_LOSE_TRAIN_SFX_PRIMARY = "/assets/train.wav";
+const LEVEL2_LOSE_TRAIN_SFX_FALLBACK = "/assets/train.mp3";
 const INTRO_TITLE = "Lie Better";
 const INTRO_PROMPT = "press enter....";
 const LEVEL1_CALLER_NAME = "Unknown Caller";
@@ -350,6 +352,45 @@ export default function Home() {
       }
       console.error("🚨  [SFX] Browser blocked explosion sound playback", error);
     }
+  }, [stopExplosionSound]);
+
+  const playLevel2LoseTrainSound = useCallback(async () => {
+    stopExplosionSound();
+    const candidates = [LEVEL2_LOSE_TRAIN_SFX_PRIMARY, LEVEL2_LOSE_TRAIN_SFX_FALLBACK];
+
+    for (const src of candidates) {
+      const audio = new Audio(src);
+      audio.preload = "auto";
+      audio.volume = 1;
+      audio.currentTime = 0;
+      explosionAudioRef.current = audio;
+
+      audio.onended = () => {
+        if (explosionAudioRef.current === audio) {
+          explosionAudioRef.current = null;
+        }
+      };
+
+      audio.onerror = (event) => {
+        if (explosionAudioRef.current === audio) {
+          explosionAudioRef.current = null;
+        }
+        console.warn("⚠️  [SFX] Level 2 train sound load/playback error", { src, event });
+      };
+
+      try {
+        await audio.play();
+        console.info("🚆🔊  [SFX] Level 2 lose train sound played", { src });
+        return;
+      } catch (error) {
+        if (explosionAudioRef.current === audio) {
+          explosionAudioRef.current = null;
+        }
+        console.warn("⚠️  [SFX] Level 2 train sound attempt failed", { src, error });
+      }
+    }
+
+    console.error("🚨  [SFX] Level 2 lose train sound unavailable after fallback attempts");
   }, [stopExplosionSound]);
 
   const speakNpcLine = useCallback(
@@ -1282,7 +1323,7 @@ export default function Home() {
     if (currentLevel === 1) {
       void playExplosionSound();
     } else {
-      console.info("🔇  [SFX] Level 2 lose: boom disabled");
+      void playLevel2LoseTrainSound();
     }
     setIsSceneShaking(true);
     setExplosionFlashVisible(true);
@@ -1305,7 +1346,7 @@ export default function Home() {
       window.clearTimeout(showDestroyed);
       window.clearTimeout(stopShake);
     };
-  }, [currentLevel, exploded, playExplosionSound, unlockAudioPlayback]);
+  }, [currentLevel, exploded, playExplosionSound, playLevel2LoseTrainSound, unlockAudioPlayback]);
 
   useEffect(() => {
     if (!won) return;
@@ -1378,7 +1419,7 @@ export default function Home() {
       </div>
 
       <div
-        className={`pointer-events-none absolute inset-0 z-10 bg-black transition-opacity duration-[1400ms] ease-out ${hasStarted && !destroyedBackgroundVisible ? "opacity-60" : "opacity-0"
+        className={`pointer-events-none absolute inset-0 z-10 bg-black transition-opacity duration-[1400ms] ease-out ${hasStarted && !destroyedBackgroundVisible ? (currentLevel === 2 ? "opacity-50" : "opacity-60") : "opacity-0"
           }`}
       />
 
