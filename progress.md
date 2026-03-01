@@ -225,3 +225,69 @@ Original prompt: Build and iterate a playable web game in this workspace, valida
 
 - `npx tsc --noEmit` ✅
 - Playwright action-loop validation skipped in this environment (project runs on external VMs; no local gameplay runtime expected here).
+
+## 2026-03-01 - Suica Gate Hitbox Circle (User Requested)
+
+- Switched the level-2 Suica gate hit detection in `app/page.tsx` from axis-aligned rectangle checks to circular collision (`distance <= radius`), centered on the gate target.
+- Replaced `IC_GATE_HITBOX_WIDTH_RATIO` / `IC_GATE_HITBOX_HEIGHT_RATIO` with a single `IC_GATE_HITBOX_DIAMETER_RATIO` for consistent circular behavior across viewport sizes.
+- Updated the visual target overlay to `rounded-full` and synced width/height with the shared diameter ratio so visuals match gameplay collision.
+
+## 2026-03-01 - Validation (Suica Hitbox Circle)
+
+- `npx tsc --noEmit` ✅
+- `npm run lint` ❌ (pre-existing, unrelated to this patch):
+  - `INTRO_PROMPT` is assigned a value but never used
+  - `lastEmotionScore` is assigned a value but never used
+- Playwright action-loop validation skipped in this environment (project runtime is on external VMs per user workflow; local main runtime is not expected here).
+
+## 2026-03-01 - Suica Hitbox Overlay Shape Fix (User Requested)
+
+- Fixed the visual hitbox overlay in `app/page.tsx` to render as a true circle (not an ellipse) by replacing percentage `height` with `aspectRatio: "1 / 1"` while keeping width tied to `IC_GATE_HITBOX_DIAMETER_RATIO`.
+- Result: on-screen target now matches the circular collision logic.
+
+## 2026-03-01 - Validation (Suica Circle Overlay)
+
+- `npx tsc --noEmit` ✅
+
+## 2026-03-01 - Suica Hitbox Logic Synced To Visual Overlay (User Requested)
+
+- Updated `app/page.tsx` so level-2 hit detection now uses the DOM rect of the visible red circle (`suicaHitboxRef`) for center/radius math.
+- Result: moving/scaling the visual overlay directly moves/scales the real collision hitbox one-to-one.
+- Kept a gate-based fallback path if the overlay ref is temporarily unavailable.
+
+## 2026-03-01 - Validation (Suica Visual Sync)
+
+- `npx tsc --noEmit` ✅
+
+## 2026-03-01 - Level 2 NPC Sprite Swap (User Requested)
+
+- Updated `characterImageSrc` in `app/page.tsx`:
+  - while level-2 Suica minigame is active (`isSuicaChallengeActive`): `/assets/NPC2win.png`
+  - on level-2 win screen (`won`): `/assets/NPC2final.png`
+- Added `isSuicaChallengeActive` to the memo dependency list so sprite updates are immediate when minigame starts.
+
+## 2026-03-01 - Validation (Level 2 NPC Sprite Swap)
+
+- `npx tsc --noEmit` ✅
+
+## 2026-03-01 - Suica Gate Bip SFX (User Requested)
+
+- Added `playSuicaBip()` in `app/page.tsx` that plays `/assets/bip.wav` with high volume and emoji-formatted warning logs on failure.
+- Triggered the bip exactly when Suica gate challenge completes (`completeSuicaGateChallenge`).
+- Added success log metadata showing `sfx: "bip.wav"` on level-2 gate scan.
+
+## 2026-03-01 - Validation (Suica Gate Bip)
+
+- `npx tsc --noEmit` ✅
+
+## 2026-03-01 - Level 2 Timer Badge Position/Size Update (User Requested)
+
+- Moved the `Last Train In` timer badge from the global top-right HUD into the NPC2 character container so it sits above NPC2.
+- Increased badge visual weight for readability:
+  - larger text (`text-base` / `md:text-lg`)
+  - larger padding (`px-4 py-2.5` / `md:px-5 md:py-3`)
+  - stronger border/glow for legibility.
+
+## 2026-03-01 - Validation (Level 2 Timer Badge Move)
+
+- `npx tsc --noEmit` ✅
