@@ -152,3 +152,9 @@ output/web-game/   captured screenshots and state dumps
 - Browser autoplay policies may block voice playback until user interaction.
 - The emotion service may require `ffmpeg` to normalize uploaded audio.
 - This is a fictional, game-only scenario. The repo is for interactive narrative and voice AI experimentation, not real-world guidance.
+
+## Authors
+
+- Giovanni Affatato
+- Martin Barran
+- Rebecca Casati
