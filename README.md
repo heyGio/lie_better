@@ -31,15 +31,15 @@ There is also a no-mic fallback for testing and demos through typed input and qu
 
 ### Title / Call Screen
 
-![Title screen](output/web-game/idle-layout-check/shot-0.png)
+![Title screen](output/web-game/visual/shot-0.png)
 
 ### Level 1
 
-![Level 1 gameplay](output/web-game/level1-win-4/shot-3.png)
+![Level 1 gameplay](output/web-game/visual/level-1.png)
 
 ### Level 2
 
-![Level 2 gameplay](output/web-game/level2-win-2/shot-3.png)
+![Level 2 gameplay](output/web-game/visual/level-2.png)
 
 ## Features
 
