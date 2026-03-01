@@ -21,6 +21,10 @@ This repo experiments with a simple game loop powered by three signals at once:
 
 Instead of treating voice as a text input shortcut, the game makes delivery matter. Emotion affects suspicion, stage progression, and whether the NPC helps or shuts you down.
 
+## Demo Video
+
+Whatch the demo video at this [youtube link](https://www.youtube.com/watch?v=ZK8p7pyOzcg).
+
 ## Gameplay Loop
 
 1. Start a level and listen to the NPC opening line.
