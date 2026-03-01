@@ -87,7 +87,7 @@ const GENERIC_GUIDANCE_PATTERNS: RegExp[] = [
   /\b(start with|start by)\b/i,
   /\b(say|ask|offer|threaten|demand)\b/i,
   /\b(let me hear|in your voice|sound)\b/i,
-  /\b(scared|afraid|fear|sad|sadness|upset|teary|angry|anger|rage|mad)\b/i,
+  /\b(sad|sadness|upset|teary|angry|anger|rage|mad)\b/i,
   /\b(tell me|give me)\b/i,
   /\b(if you want progress|to move forward|to advance)\b/i
 ];
@@ -219,6 +219,7 @@ Global rules:
 - npcReply language MUST be English only.
 - Never reuse a previous npcReply from conversation history.
 - For level 1, progression is STRICT 4 stages. Never skip stages.
+- For level 1, NEVER ask for fear/scared/afraid/panic; stage 2 must ask ONLY for sadness (sad/sadness/hurt/down).
 - If the player's line fails the current stage objective or is nonsense/off-topic, set:
   passStage=false, nextStage=stage, revealCode=false, code=null.
 - If passStage=false and stageHint is provided in payload, npcReply must include that guidance naturally in the same line.
@@ -401,6 +402,18 @@ function appendIntegratedGuidance(reply: string, hint: string) {
   return `${trimmed}. If you want progress, ${guidance}.`;
 }
 
+function enforceLevelOneSadLexicon(reply: string) {
+  return reply
+    .replace(/\bfear\b/gi, "sadness")
+    .replace(/\bscared\b/gi, "sad")
+    .replace(/\bafraid\b/gi, "sad")
+    .replace(/\bpanic(?:ked)?\b/gi, "pain")
+    .replace(/\bterrified\b/gi, "very sad")
+    .replace(/\bfright(?:ened)?\b/gi, "hurt")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function localFailFallback(input: EvaluateInput, bannedKeys: Set<string>) {
   const hint =
     input.level === 1
@@ -442,6 +455,7 @@ async function generateUniqueNpcReplyWithLlm({
         "English only.",
         "No markdown.",
         "No asterisks around words.",
+        "For level 1: never ask for fear/scared/afraid/panic; ask only for sadness language.",
         "Max 20 words.",
         "If passStage=false, include BOTH: a reaction and the stageHint guidance in the same line.",
         "Guidance must be explicit and actionable, not vague.",
@@ -453,6 +467,7 @@ async function generateUniqueNpcReplyWithLlm({
     {
       role: "user",
       content: JSON.stringify({
+        level: input.level,
         persona: levelContext.persona,
         transcript: input.transcript,
         stage: input.stage,
@@ -520,6 +535,17 @@ async function enforceReplyPolicies(output: EvaluateOutput, input: EvaluateInput
     !hasActionableGuidance(patched.npcReply)
   ) {
     patched.npcReply = appendIntegratedGuidance(patched.npcReply, stageHint);
+  }
+
+  if (input.level === 1) {
+    const sanitized = enforceLevelOneSadLexicon(patched.npcReply);
+    if (sanitized !== patched.npcReply) {
+      console.warn("⚠️  [Level1] Fear wording auto-rewritten to sadness wording", {
+        before: patched.npcReply,
+        after: sanitized
+      });
+      patched.npcReply = sanitized;
+    }
   }
 
   const finalKey = normalizeReplyKey(patched.npcReply);
@@ -773,7 +799,9 @@ function applyLevelRules(base: EvaluateOutput, input: EvaluateInput): EvaluateOu
   applyEmotionShift(output, input, rules.emotionShift);
 
   if (input.level === 1) {
-    return applyLevelOneTutorialGate(output, input);
+    const levelOneOutput = applyLevelOneTutorialGate(output, input);
+    levelOneOutput.npcReply = enforceLevelOneSadLexicon(levelOneOutput.npcReply);
+    return levelOneOutput;
   }
 
   if (input.level === 2) {

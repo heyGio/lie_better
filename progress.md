@@ -721,3 +721,21 @@ Original prompt: Build and iterate a playable web game in this workspace, valida
 ## 2026-03-01 - Validation (Asterisk Ban)
 
 - `npx tsc --noEmit` ✅
+
+## 2026-03-01 - Level 1 Hard Ban on Fear Wording (User Requested)
+
+- Enforced strict level-1 lexical rule in `app/api/evaluate/route.ts`:
+  - NPC must never ask for fear/scared/afraid/panic in level 1
+  - stage 2 wording is sadness-only
+- Added runtime guardrail function `enforceLevelOneSadLexicon()` that rewrites any fear-oriented wording to sadness wording before returning NPC reply.
+- Applied guardrail in both paths:
+  - immediately after level-1 tutorial gate output
+  - again inside reply policy enforcement (post-LLM polish), with emoji warning logs when rewrite occurs.
+- Strengthened prompt constraints:
+  - main `SYSTEM_PROMPT` now explicitly forbids fear wording in level 1
+  - secondary NPC-polish prompt also carries the same rule
+
+## 2026-03-01 - Validation (Level 1 Fear Ban)
+
+- `npx tsc --noEmit` ✅
+- grep checks for stale level-1 fear-demand strings in evaluate route ✅
