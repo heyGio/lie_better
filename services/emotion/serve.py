@@ -1,6 +1,6 @@
 """
 Local speech-emotion-recognition server using
-firdhokk/speech-emotion-recognition-with-openai-whisper-large-v3
+r-f/wav2vec-english-speech-emotion-recognition
 on NVIDIA GPU via the Hugging Face transformers pipeline.
 
 Start:
@@ -32,7 +32,7 @@ from transformers import pipeline  # type: ignore[import-untyped]
 
 MODEL_ID = os.getenv(
     "EMOTION_MODEL",
-    "firdhokk/speech-emotion-recognition-with-openai-whisper-large-v3",
+    "r-f/wav2vec-english-speech-emotion-recognition",
 )
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -58,7 +58,7 @@ print(f"✅  Model loaded in {time.time() - _start:.1f}s  (device={DEVICE})")
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-EXPECTED_SR = 16_000  # Whisper expects 16 kHz mono
+EXPECTED_SR = 16_000  # wav2vec pipelines expect 16 kHz mono
 
 
 def _convert_to_wav_via_ffmpeg(raw_bytes: bytes) -> bytes:

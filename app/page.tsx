@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { Orbitron, Rajdhani } from "next/font/google";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type NpcMood = "calm" | "suspicious" | "hostile";
@@ -90,6 +91,18 @@ const PLAYER_EMOTIONS: PlayerEmotion[] = [
   "sad",
   "surprise"
 ];
+
+const orbitron = Orbitron({
+  subsets: ["latin"],
+  weight: ["700", "800"],
+  display: "swap"
+});
+
+const rajdhani = Rajdhani({
+  subsets: ["latin"],
+  weight: ["500", "600", "700"],
+  display: "swap"
+});
 
 const EMOTION_VISUALS: Record<PlayerEmotion, { emoji: string; fill: string; stroke: string; glow: string }> = {
   angry: { emoji: "😠", fill: "#fee2e2", stroke: "#ef4444", glow: "rgba(239,68,68,0.55)" },
@@ -1383,6 +1396,15 @@ export default function Home() {
     return { emotion, score };
   }, [lastEmotionScores]);
 
+  const emotionConfidencePct = useMemo(() => {
+    const sourceScore =
+      typeof lastEmotionScore === "number" && Number.isFinite(lastEmotionScore)
+        ? lastEmotionScore
+        : topEmotionDetail?.score ?? null;
+    if (typeof sourceScore !== "number" || !Number.isFinite(sourceScore) || sourceScore <= 0) return null;
+    return Math.round(clamp(sourceScore, 0, 1) * 100);
+  }, [lastEmotionScore, topEmotionDetail]);
+
   const recognizedEmotion = lastEmotion ?? topEmotionDetail?.emotion ?? null;
   const recognizedEmotionVisual = recognizedEmotion ? EMOTION_VISUALS[recognizedEmotion] : null;
 
@@ -1424,34 +1446,89 @@ export default function Home() {
       />
 
       {!hasStarted ? (
-        <div className="absolute inset-0 z-30 flex items-center justify-center">
-          <div className="pointer-events-auto relative flex flex-col items-center gap-6 overflow-hidden rounded-3xl border border-cyan-100/65 bg-black/88 px-7 py-6 text-center shadow-[0_0_75px_rgba(34,211,238,0.4)] backdrop-blur-[3px] md:px-12 md:py-9">
-            <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-slate-950/55 via-black/70 to-black/85" />
-            <div className="relative z-10 flex flex-col items-center">
-              <h1 className="text-5xl font-black uppercase tracking-[0.24em] text-white drop-shadow-[0_0_26px_rgba(165,243,252,0.9)] md:text-7xl">
+        <div className={`absolute inset-0 z-30 flex items-center justify-center px-4 py-6 md:px-8 ${rajdhani.className}`}>
+          <div className="title-screen-vignette" />
+          <div className="title-screen-grid" />
+          <div className="title-screen-orb title-screen-orb-left" />
+          <div className="title-screen-orb title-screen-orb-right" />
+
+          <section className="title-screen-panel pointer-events-auto relative w-full max-w-[1120px] overflow-hidden rounded-[30px] px-5 py-6 text-white sm:px-8 sm:py-8 md:px-10 md:py-10">
+            <div className="title-screen-panel-glow" />
+
+            <div className="relative z-10">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-bold uppercase tracking-[0.28em] text-cyan-100/85 sm:text-xs">
+                <span className="title-chip">Tactical Deception Sim</span>
+                <span className="title-chip title-chip-hot">Live Build 2026</span>
+              </div>
+
+              <h1 className={`${orbitron.className} title-logo mt-6 text-[clamp(2.6rem,8.2vw,6.4rem)] leading-[0.9] uppercase`}>
                 {INTRO_TITLE}
               </h1>
-              <p className="mt-5 text-sm font-semibold tracking-[0.32em] text-white/90 md:text-lg">
-                CHOOSE LEVEL
+
+              <p className="mt-4 max-w-[760px] text-sm font-semibold uppercase tracking-[0.14em] text-cyan-50/90 sm:text-base md:text-lg">
+                Two impossible calls. One timer. Zero mercy.
               </p>
-              <div className="mt-8 flex gap-4">
+
+              <div className="title-divider mt-6" />
+
+              <div className="mt-6 grid gap-3 text-left md:grid-cols-2 md:gap-4">
                 <button
+                  id="level-1-start-btn"
                   type="button"
                   onClick={() => startGameSequence(false, 1)}
-                  className="rounded-lg border border-cyan-400 bg-cyan-950 px-6 py-3 font-bold uppercase tracking-widest text-cyan-50 shadow-[0_0_15px_rgba(34,211,238,0.4)] transition hover:bg-cyan-800"
+                  className="title-level-card title-level-card-l1 group rounded-2xl p-4 text-left sm:p-5"
                 >
-                  Level 1
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="title-level-tag">Level 1</p>
+                      <p className={`${orbitron.className} mt-1 text-xl uppercase tracking-[0.12em] sm:text-2xl`}>Bomb Caller</p>
+                    </div>
+                    <span className="title-difficulty">Hard</span>
+                  </div>
+                  <p className="mt-3 text-sm leading-relaxed text-slate-200 sm:text-[15px]">
+                    Convince an unknown caller to leak the disarm code before the countdown reaches zero.
+                  </p>
+                  <div className="mt-4 flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-[0.16em] text-cyan-100/85">
+                    <span className="title-token">Voice Emotion</span>
+                    <span className="title-token">4 Tutorial Stages</span>
+                    <span className="title-token">Bomb Timer</span>
+                  </div>
+                  <p className="mt-4 text-xs font-bold uppercase tracking-[0.16em] text-cyan-100/90">Start Mission -&gt;</p>
                 </button>
+
                 <button
+                  id="level-2-start-btn"
                   type="button"
                   onClick={() => startGameSequence(false, 2)}
-                  className="rounded-lg border border-fuchsia-400 bg-fuchsia-950 px-6 py-3 font-bold uppercase tracking-widest text-fuchsia-50 shadow-[0_0_15px_rgba(232,121,249,0.4)] transition hover:bg-fuchsia-800"
+                  className="title-level-card title-level-card-l2 group rounded-2xl p-4 text-left sm:p-5"
                 >
-                  Level 2
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="title-level-tag">Level 2</p>
+                      <p className={`${orbitron.className} mt-1 text-xl uppercase tracking-[0.12em] sm:text-2xl`}>Mochi Heist</p>
+                    </div>
+                    <span className="title-difficulty">Insane</span>
+                  </div>
+                  <p className="mt-3 text-sm leading-relaxed text-slate-100 sm:text-[15px]">
+                    Outplay Mochi, recover your Suica card, then hit the IC gate under pressure before the last train leaves.
+                  </p>
+                  <div className="mt-4 flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-[0.16em] text-amber-100/85">
+                    <span className="title-token">Train SFX</span>
+                    <span className="title-token">Gate Minigame</span>
+                    <span className="title-token">No Mercy</span>
+                  </div>
+                  <p className="mt-4 text-xs font-bold uppercase tracking-[0.16em] text-amber-100/90">Start Mission -&gt;</p>
                 </button>
               </div>
+
+              <div className="mt-6 flex flex-wrap items-center justify-between gap-3 text-xs font-semibold uppercase tracking-[0.14em] text-slate-200/90 sm:text-sm">
+                <p className="title-enter-hint">
+                  <span className="title-keycap">Enter</span> {INTRO_PROMPT}
+                </p>
+                <p className="title-subhint">Select a level or press Enter to launch Level 1 instantly.</p>
+              </div>
             </div>
-          </div>
+          </section>
         </div>
       ) : null}
 
@@ -1677,6 +1754,7 @@ export default function Home() {
                       }}
                     >
                       You sound {EMOTION_ADJECTIVES[recognizedEmotion]} {recognizedEmotionVisual.emoji}
+                      {emotionConfidencePct ? ` (${emotionConfidencePct}%)` : ""}
                     </p>
                   ) : null}
                 </div>

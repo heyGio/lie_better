@@ -1,8 +1,9 @@
 const LEGACY_HF_INFERENCE_PREFIX = "https://api-inference.huggingface.co/models/";
 const ROUTER_HF_INFERENCE_PREFIX = "https://router.huggingface.co/hf-inference/models/";
+const DEFAULT_EMOTION_MODEL = "r-f/wav2vec-english-speech-emotion-recognition";
 
 const DEFAULT_HF_EMOTION_MODEL_RAW =
-  process.env.HF_EMOTION_MODEL ?? "firdhokk/speech-emotion-recognition-with-openai-whisper-large-v3";
+  process.env.HF_EMOTION_MODEL ?? DEFAULT_EMOTION_MODEL;
 const DEFAULT_HF_EMOTION_MODEL = normalizeEmotionModelId(DEFAULT_HF_EMOTION_MODEL_RAW);
 
 const DEFAULT_HF_EMOTION_URL =
@@ -58,7 +59,7 @@ function clamp(value: number, min: number, max: number) {
 
 function normalizeEmotionModelId(raw: string) {
   const trimmed = raw.trim();
-  if (!trimmed) return "firdhokk/speech-emotion-recognition-with-openai-whisper-large-v3";
+  if (!trimmed) return DEFAULT_EMOTION_MODEL;
 
   if (trimmed.startsWith("https://huggingface.co/")) {
     const withoutDomain = trimmed.replace("https://huggingface.co/", "");
