@@ -29,17 +29,17 @@ There is also a no-mic fallback for testing and demos through typed input and qu
 
 ## Visuals
 
-### Title / Call Screen
+### Title / Start
 
-![Title screen](output/web-game/visual/shot-0.png)
+![Title screen](output/web-game/visuals/shot-0.png)
 
 ### Level 1
 
-![Level 1 gameplay](output/web-game/visual/level-1.png)
+![Level 1 gameplay](output/web-game/visuals/level-1.png)
 
 ### Level 2
 
-![Level 2 gameplay](output/web-game/visual/level-2.png)
+![Level 2 gameplay](output/web-game/visuals/level-2.png)
 
 ## Features
 
