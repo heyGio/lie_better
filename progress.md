@@ -327,3 +327,249 @@ Original prompt: Build and iterate a playable web game in this workspace, valida
 - `npx tsc --noEmit` ✅
 - `npx eslint app/page.tsx` ✅
 - Playwright action-loop validation intentionally skipped here (user workflow runs game runtime on external VMs; local main runtime is not expected in this workspace session).
+
+## 2026-03-01 - Title Screen Info Simplification (User Requested)
+
+- Simplified the new title screen copy in `app/page.tsx` to match the old lightweight information density:
+  - removed extra mission/difficulty/tag copy blocks
+  - kept only: game title, `Choose Level`, two level buttons, and Enter hint
+- Preserved the upgraded visual atmosphere and typography so the screen still looks premium without text overload.
+
+## 2026-03-01 - Validation (Title Screen Simplification)
+
+- `npx tsc --noEmit` ✅
+- `npx eslint app/page.tsx` ✅
+
+## 2026-03-01 - Title Logo Asset Swap (User Requested)
+
+- Replaced the title text on the start screen with the provided PNG logo.
+- Imported user asset from:
+  - `/Users/martin/Downloads/logo (1).png`
+- Added project asset at:
+  - `public/assets/title-logo.png`
+- Updated `app/page.tsx` start-screen header to render the logo image via Next `<Image>` with native dimensions (`1376x768`) and responsive sizing.
+
+## 2026-03-01 - Validation (Title Logo Asset Swap)
+
+- `npx tsc --noEmit` ✅
+- `npx eslint app/page.tsx` ✅
+
+## 2026-03-01 - Title Screen Deconstruction + Full Motion Pass (User Requested)
+
+- Removed the central glass/panel "square" container from the start screen.
+- Kept only core elements:
+  - logo image
+  - `Level 1` button
+  - `Level 2` button
+- Lifted level buttons upward so they sit closer to the logo/title zone with a floating layout.
+- Reworked typography for level buttons with a cleaner futuristic font (`Oxanium`) to better match the art direction.
+- Added dense animated VFX across the full title scene:
+  - animated vignette breathing
+  - moving grid + scanline sweep
+  - drifting/rotating color orbs
+  - cinematic light beams
+  - pulsing radial energy bloom
+  - rotating conic glow field
+  - rising particles
+  - logo hover/float + aura + light sweep + chromatic pulse
+  - floating level pills + shimmer sweep + glow pulse + text flicker
+- Preserved reduced-motion fallback by disabling all title-scene animations when `prefers-reduced-motion` is enabled.
+
+## 2026-03-01 - Validation (Title Screen Full Motion Pass)
+
+- `npx tsc --noEmit` ✅
+- `npx eslint app/page.tsx` ✅
+- Note: running `eslint` on `app/globals.css` directly is not supported by current project lint parser setup (non-blocking for this change).
+
+## 2026-03-01 - Hover Ghost Characters On Level Buttons (User Requested)
+
+- Removed background "bubble" visuals from the title scene.
+- Added hover/focus-specific transparent character reveals behind the logo zone:
+  - hover `Level 1` => animated ghost character image (`/assets/angrycat.png`)
+  - hover `Level 2` => animated ghost cat image (`/assets/mochi_cat.png`)
+- Added pointer/focus handling in `app/page.tsx` using `titleHoverLevel` state to trigger effect reliably on mouse and keyboard focus.
+- Added dedicated high-motion FX for hover reveals in `app/globals.css`:
+  - reveal transition + transparency
+  - stylized float path
+  - pulse opacity loop
+  - hue/glow shift loop
+- Kept reduced-motion safety by disabling ghost animation under `prefers-reduced-motion`.
+
+## 2026-03-01 - Validation (Hover Ghost Characters)
+
+- `npx tsc --noEmit` ✅
+- `npx eslint app/page.tsx` ✅
+
+## 2026-03-01 - Hover Ghost Asset Swap (User Requested)
+
+- Updated title hover ghost images:
+  - Level 1 hover now uses `/assets/cat2.png`
+  - Level 2 hover now uses `/assets/NPC2.png`
+
+## 2026-03-01 - Validation (Hover Ghost Asset Swap)
+
+- `npx tsc --noEmit` ✅
+- `npx eslint app/page.tsx` ✅
+
+## 2026-03-01 - Ghost Hover Smoothing + Symmetry Pass (User Requested)
+
+- Reworked title hover ghost behavior to remove abrupt pop/depop:
+  - added longer eased transition on `opacity`, `transform`, and `filter`
+  - active/inactive states now fade smoothly
+- Removed ghost motion/giggling while active:
+  - ghosts are now static (no hover keyframe movement)
+- Repositioned ghosts to be symmetric and aligned around the viewport center:
+  - shared center anchor (`left: 50%`)
+  - mirrored X offsets via shared CSS variable (`--title-ghost-offset`)
+  - unified top alignment for level 1 and level 2 images
+- Pushed level 1 ghost further left and level 2 ghost further right while keeping mirrored geometry.
+
+## 2026-03-01 - Validation (Ghost Hover Smoothing + Symmetry)
+
+- `npx tsc --noEmit` ✅
+- `npx eslint app/page.tsx` ❌ (current workspace ESLint config issue: circular structure in `.eslintrc.json`, unrelated to this patch).
+
+## 2026-03-01 - Gemini Live Emotion Migration (User Requested)
+
+- Replaced speech-emotion backend integration from Hugging Face/local pipeline to Gemini Live API using the requested model:
+  - `gemini-2.5-flash-native-audio-preview-12-2025`
+- Added new server utility: `lib/gemini-emotion.ts`
+  - Uses `@google/genai` Live API session (`Modality.TEXT`) for emotion classification.
+  - Converts browser-recorded audio to Gemini-compatible `audio/pcm;rate=16000` with `ffmpeg` before streaming chunks.
+  - Enforces strict mapping to in-game emotion set:
+    - `angry|disgust|fear|happy|neutral|sad|surprise`
+  - Handles parsing hardening (strict JSON preferred, fallback extraction) and timeout/error paths.
+- Updated `app/api/transcribe/route.ts`:
+  - switched import from `@/lib/huggingface` to `@/lib/gemini-emotion`
+  - response now returns `emotionSource: "gemini"` when detected.
+- Updated frontend parsing/UI wiring in `app/page.tsx`:
+  - `emotionSource` type switched from `"huggingface"` to `"gemini"`
+  - server error helper text now points to Gemini API key/config.
+- Updated environment/docs:
+  - `.env.example` now uses `GEMINI_API_KEY` + optional `GEMINI_EMOTION_MODEL`
+  - `README.md` switched architecture/env docs from Hugging Face to Gemini Live and added `ffmpeg` VM prerequisite.
+- Added dependency:
+  - `@google/genai`
+
+## 2026-03-01 - Validation (Gemini Migration)
+
+- `npx tsc --noEmit` ✅
+- `npx eslint app/api/transcribe/route.ts app/page.tsx lib/gemini-emotion.ts` ❌
+  - toolchain/config issue in existing ESLint setup (`Converting circular structure to JSON` from `.eslintrc.json`), unrelated to runtime migration logic.
+- Playwright action-loop validation skipped in this environment (project runtime remains external VM-focused per repo notes).
+
+## 2026-03-01 - Gemini Live 1007 Protocol Hardening
+
+- Addressed likely Live WebSocket `1007` close causes by tightening frame/schema behavior in `lib/gemini-emotion.ts`:
+  - model name normalized to raw id (`gemini-2.5-flash-native-audio-preview-12-2025`), no forced `models/` prefix in `live.connect`.
+  - switched realtime audio payload from `media` to `audio` field for `sendRealtimeInput`.
+  - enabled explicit VAD mode (`explicitVadSignal: true`) and wrapped audio stream with `activityStart` / `activityEnd` events.
+  - improved close diagnostics with close `reason` in error message.
+- Kept strict JSON-only prompt and in-game emotion set mapping unchanged.
+
+## 2026-03-01 - Validation (Gemini 1007 Hardening)
+
+- `npx tsc --noEmit` ✅
+
+## 2026-03-01 - Gemini API Compatibility Fix (explicitVadSignal)
+
+- Removed unsupported `explicitVadSignal` from Gemini Live config in `lib/gemini-emotion.ts`.
+- Replaced explicit VAD activity markers with standard stream end signal:
+  - removed `activityStart` / `activityEnd`
+  - now uses `audioStreamEnd: true` after chunked realtime audio.
+- Kept realtime payload on `audio` field and strict JSON response prompt.
+
+## 2026-03-01 - Validation (explicitVadSignal fix)
+
+- `npx tsc --noEmit` ✅
+
+## 2026-03-01 - Gemini 1007 Fix (non-audio request)
+
+- Root-cause aligned with Gemini Native Audio behavior: model expects AUDIO response modality in Live API.
+- Updated `lib/gemini-emotion.ts` Live setup:
+  - `responseModalities` switched from `TEXT` to `AUDIO`
+  - enabled `outputAudioTranscription: {}` to recover machine-readable text from model audio output.
+- Parser input now combines:
+  - text parts from `modelTurn` (if any)
+  - `serverContent.outputTranscription.text` chunks (primary path for AUDIO responses)
+- Kept existing strict-emotion-set parsing/mapping logic.
+
+## 2026-03-01 - Validation (non-audio 1007 fix)
+
+- `npx tsc --noEmit` ✅
+
+## 2026-03-01 - Gemini Native Audio Turn Shaping
+
+- Further hardened Live turn sequencing in `lib/gemini-emotion.ts` to avoid text-only turn ambiguity:
+  - send text instruction upfront with `turnComplete: false`
+  - stream audio chunks
+  - finish with `audioStreamEnd: true`
+  - removed post-audio text-only `sendClientContent` turn.
+- Goal: ensure the model processes a genuinely audio-driven request path.
+
+## 2026-03-01 - Validation (turn shaping)
+
+- `npx tsc --noEmit` ✅
+
+## 2026-03-01 - Gemini Intermittent Empty Payload Hardening
+
+- Fixed intermittent `Gemini returned no parsable response content.` by hardening Live response finalization in `lib/gemini-emotion.ts`:
+  - added explicit `session.sendClientContent({ turnComplete: true })` after `audioStreamEnd`.
+  - added 1.3s grace window after `turnComplete` to capture late `outputAudioTranscription` chunks (ordering is not guaranteed).
+  - parser now evaluates multiple candidates (latest output transcript, latest text chunk, full text aggregate).
+  - added automatic retry (1 retry, total 2 attempts) for transient errors:
+    - no parsable response content
+    - timeout
+    - close code 1007
+- Added client-side resilience in `app/page.tsx`:
+  - if Gemini error is specifically `no parsable response content`, fallback transcript-based emotion inference is now allowed (instead of hard blocking).
+  - preserves hard error behavior for genuine Gemini config/auth failures.
+
+## 2026-03-01 - Validation (intermittent empty payload hardening)
+
+- `npx tsc --noEmit` ✅
+
+## 2026-03-01 - Frontend Recoverable Emotion Error Guard Widening
+
+- Hardened recoverable emotion-error detection in `app/page.tsx` with `isRecoverableEmotionErrorMessage()`.
+- Recoverable patterns now include:
+  - `no parsable response content`
+  - `no parseable response content` (alternate spelling)
+  - `Cannot extract voices from a non-audio request`
+  - `code 1007`
+- In recoverable cases, transcript fallback is always allowed and stale mic error is cleared (`setMicError("")`).
+- Non-recoverable Gemini errors still show user-friendly config warning and skip fallback.
+
+## 2026-03-01 - Validation (frontend recoverable guard)
+
+- `npx tsc --noEmit` ✅
+
+## 2026-03-01 - Log Severity Tuning for Recoverable Gemini Gaps
+
+- User-observed warning stream was still noisy for recoverable cases.
+- Updated `app/api/transcribe/route.ts`:
+  - added recoverable-error matcher (same pattern family as frontend).
+  - recoverable Gemini errors now log as `console.info`:
+    - `ℹ️  [Emotion] Recoverable Gemini gap, transcript fallback remains active`
+  - non-recoverable errors remain `console.warn`.
+- Updated `app/page.tsx`:
+  - recoverable fallback log downgraded from `console.warn` to `console.info`.
+
+## 2026-03-01 - Validation (log severity tuning)
+
+- `npx tsc --noEmit` ✅
+
+## 2026-03-01 - Model Switch to gemini-2.5-flash (User Requested)
+
+- Switched emotion inference target model to `gemini-2.5-flash`.
+- Refactored `lib/gemini-emotion.ts` to use Gemini `models.generateContent` instead of Live WebSocket flow for emotion classification.
+  - Input now sent as normalized WAV (`audio/wav`, mono, 16kHz) with strict JSON output prompt.
+  - Keeps strict in-game emotion set mapping: `angry|disgust|fear|happy|neutral|sad|surprise`.
+  - Retains retry behavior for transient provider-side gaps/timeouts/quota spikes.
+- Updated docs/env defaults:
+  - `.env.example` now defaults to `GEMINI_EMOTION_MODEL=gemini-2.5-flash`
+  - README updated from Gemini Live wording to Gemini API wording + model value.
+
+## 2026-03-01 - Validation (gemini-2.5-flash switch)
+
+- `npx tsc --noEmit` ✅

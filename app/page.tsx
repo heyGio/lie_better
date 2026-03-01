@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { Orbitron, Rajdhani } from "next/font/google";
+import { Oxanium, Rajdhani } from "next/font/google";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type NpcMood = "calm" | "suspicious" | "hostile";
@@ -20,7 +20,7 @@ interface TranscribeResponse {
   emotionScore?: number | null;
   emotionScores?: Partial<Record<PlayerEmotion, number>> | null;
   emotionModel?: string | null;
-  emotionSource?: "huggingface" | null;
+  emotionSource?: "gemini" | null;
   emotionError?: string | null;
   error?: string;
 }
@@ -31,7 +31,7 @@ interface TranscriptionResult {
   emotionScore: number | null;
   emotionScores: EmotionScores | null;
   emotionModel: string | null;
-  emotionSource: "huggingface" | null;
+  emotionSource: "gemini" | null;
   emotionError: string | null;
 }
 
@@ -69,8 +69,6 @@ const LEVEL1_BGM_SRC = "/assets/Concrete_Empire_2026-02-28T212713.mp3";
 const LEVEL2_BGM_SRC = "/assets/Phantom_Yamanote.mp3";
 const LEVEL2_LOSE_TRAIN_SFX_PRIMARY = "/assets/train.wav";
 const LEVEL2_LOSE_TRAIN_SFX_FALLBACK = "/assets/train.mp3";
-const INTRO_TITLE = "Lie Better";
-const INTRO_PROMPT = "press enter....";
 const LEVEL1_CALLER_NAME = "Unknown Caller";
 const LEVEL2_CALLER_NAME = "Mochi";
 const LEVEL1_FINAL_STAGE = 4;
@@ -92,13 +90,13 @@ const PLAYER_EMOTIONS: PlayerEmotion[] = [
   "surprise"
 ];
 
-const orbitron = Orbitron({
+const rajdhani = Rajdhani({
   subsets: ["latin"],
-  weight: ["700", "800"],
+  weight: ["500", "600", "700"],
   display: "swap"
 });
 
-const rajdhani = Rajdhani({
+const oxanium = Oxanium({
   subsets: ["latin"],
   weight: ["500", "600", "700"],
   display: "swap"
@@ -216,6 +214,18 @@ function inferEmotionFromTranscript(transcript: string): {
   return { emotion: null, score: null, scores: null };
 }
 
+function isRecoverableEmotionErrorMessage(raw: string | null | undefined) {
+  if (typeof raw !== "string") return false;
+  const normalized = raw.trim().toLowerCase();
+  if (!normalized) return false;
+
+  if (/no\s+pars(?:e)?able\s+response\s+content/i.test(normalized)) return true;
+  if (normalized.includes("cannot extract voices from a non-audio request")) return true;
+  if (normalized.includes("code 1007")) return true;
+
+  return false;
+}
+
 function shouldIgnoreHotkey(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false;
   if (target.isContentEditable) return true;
@@ -230,6 +240,7 @@ export default function Home() {
   const [showOpeningLine, setShowOpeningLine] = useState(false);
   const [canTalk, setCanTalk] = useState(false);
   const [currentLevel, setCurrentLevel] = useState<1 | 2>(1);
+  const [titleHoverLevel, setTitleHoverLevel] = useState<1 | 2 | null>(null);
 
   const [timeRemaining, setTimeRemaining] = useState(START_TIME);
   const [timerRunning, setTimerRunning] = useState(false);
@@ -537,7 +548,7 @@ export default function Home() {
       emotionScore: typeof payload.emotionScore === "number" ? payload.emotionScore : null,
       emotionScores: parseEmotionScores(payload.emotionScores),
       emotionModel: typeof payload.emotionModel === "string" ? payload.emotionModel : null,
-      emotionSource: payload.emotionSource === "huggingface" ? "huggingface" : null,
+      emotionSource: payload.emotionSource === "gemini" ? "gemini" : null,
       emotionError: typeof payload.emotionError === "string" ? payload.emotionError : null
     };
   }, []);
@@ -772,7 +783,9 @@ export default function Home() {
           const result = await transcribeBlob(audioBlob);
           if (recordingSessionRef.current !== sessionId) return;
 
-          const shouldUseTextFallback = !result.emotion && !result.emotionError;
+          const isRecoverableEmotionGap = isRecoverableEmotionErrorMessage(result.emotionError);
+          const shouldUseTextFallback =
+            !result.emotion && (!result.emotionError || isRecoverableEmotionGap);
           const fallback = shouldUseTextFallback
             ? inferEmotionFromTranscript(result.transcript)
             : { emotion: null, score: null, scores: null };
@@ -780,15 +793,20 @@ export default function Home() {
           const finalEmotionScore = result.emotionScore ?? fallback.score;
           const finalEmotionScores = result.emotionScores ?? fallback.scores;
           const emotionSource = result.emotion
-            ? "huggingface"
+            ? "gemini"
             : shouldUseTextFallback
               ? "fallback-text"
               : "none";
 
-          if (!result.emotion && result.emotionError) {
-            const friendlyError = "Emotion model unavailable. Check HF token/config on server.";
+          if (!result.emotion && result.emotionError && !isRecoverableEmotionGap) {
+            const friendlyError = "Emotion model unavailable. Check Gemini API key/config on server.";
             setMicError(friendlyError);
-            console.warn("⚠️  [Emotion] Hugging Face unavailable, skipping transcript fallback", {
+            console.warn("⚠️  [Emotion] Gemini unavailable, skipping transcript fallback", {
+              emotionError: result.emotionError
+            });
+          } else if (!result.emotion && isRecoverableEmotionGap) {
+            setMicError("");
+            console.info("ℹ️  [Emotion] Gemini returned empty payload, using transcript fallback", {
               emotionError: result.emotionError
             });
           }
@@ -1082,7 +1100,7 @@ export default function Home() {
       setStatusLine(`${callerName} is speaking...`);
       void speakNpcLine(startLine, "suspicious", START_SUSPICION, targetLevel, () => {
         setCanTalk(true);
-        setStatusLine("Your turn. Click the mic button to record.");
+        setStatusLine("Your turn. Click the mic button to speak.");
         console.info("🎙️  [Intro] Click-to-record mode enabled after opening line");
       });
       console.info("📞  [Intro] Opening line displayed, timer started");
@@ -1449,84 +1467,83 @@ export default function Home() {
         <div className={`absolute inset-0 z-30 flex items-center justify-center px-4 py-6 md:px-8 ${rajdhani.className}`}>
           <div className="title-screen-vignette" />
           <div className="title-screen-grid" />
-          <div className="title-screen-orb title-screen-orb-left" />
-          <div className="title-screen-orb title-screen-orb-right" />
+          <div className="title-screen-scan" />
+          <div className="title-screen-lightbeam title-screen-lightbeam-a" />
+          <div className="title-screen-lightbeam title-screen-lightbeam-b" />
+          <div className="title-screen-radial-pulse" />
 
-          <section className="title-screen-panel pointer-events-auto relative w-full max-w-[1120px] overflow-hidden rounded-[30px] px-5 py-6 text-white sm:px-8 sm:py-8 md:px-10 md:py-10">
-            <div className="title-screen-panel-glow" />
+          <section
+            className="title-stage pointer-events-auto relative w-full max-w-[1080px] px-3 py-3 text-center text-white sm:px-4 md:px-8"
+            onMouseLeave={() => setTitleHoverLevel(null)}
+          >
+            <div className="title-stage-glow" />
+            <div className="title-stage-particles" aria-hidden>
+              <span className="title-particle title-particle-a" />
+              <span className="title-particle title-particle-b" />
+              <span className="title-particle title-particle-c" />
+              <span className="title-particle title-particle-d" />
+              <span className="title-particle title-particle-e" />
+            </div>
+            <div className="title-hover-ghost-layer" aria-hidden>
+              <Image
+                src="/assets/cat2.png"
+                alt=""
+                width={1600}
+                height={900}
+                sizes="(max-width: 768px) 78vw, 42vw"
+                className={`title-hover-ghost title-hover-ghost-l1 ${titleHoverLevel === 1 ? "is-active" : ""}`}
+              />
+              <Image
+                src="/assets/NPC2.png"
+                alt=""
+                width={1200}
+                height={1200}
+                sizes="(max-width: 768px) 78vw, 42vw"
+                className={`title-hover-ghost title-hover-ghost-l2 ${titleHoverLevel === 2 ? "is-active" : ""}`}
+              />
+            </div>
 
             <div className="relative z-10">
-              <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-bold uppercase tracking-[0.28em] text-cyan-100/85 sm:text-xs">
-                <span className="title-chip">Tactical Deception Sim</span>
-                <span className="title-chip title-chip-hot">Live Build 2026</span>
+              <div className="title-logo-wrap mx-auto mt-0 w-[min(90vw,820px)]">
+                <Image
+                  src="/assets/title-logo.png"
+                  alt="Lie Better logo"
+                  width={975}
+                  height={743}
+                  priority
+                  sizes="(max-width: 768px) 90vw, 820px"
+                  className="title-logo-image h-auto w-full select-none"
+                />
               </div>
 
-              <h1 className={`${orbitron.className} title-logo mt-6 text-[clamp(2.6rem,8.2vw,6.4rem)] leading-[0.9] uppercase`}>
-                {INTRO_TITLE}
-              </h1>
+              <div className="mx-auto mt-4 title-divider" />
 
-              <p className="mt-4 max-w-[760px] text-sm font-semibold uppercase tracking-[0.14em] text-cyan-50/90 sm:text-base md:text-lg">
-                Two impossible calls. One timer. Zero mercy.
-              </p>
-
-              <div className="title-divider mt-6" />
-
-              <div className="mt-6 grid gap-3 text-left md:grid-cols-2 md:gap-4">
+              <div className="title-level-row mx-auto mt-0 grid max-w-[640px] gap-4 text-left sm:grid-cols-2">
                 <button
                   id="level-1-start-btn"
                   type="button"
                   onClick={() => startGameSequence(false, 1)}
-                  className="title-level-card title-level-card-l1 group rounded-2xl p-4 text-left sm:p-5"
+                  onMouseEnter={() => setTitleHoverLevel(1)}
+                  onFocus={() => setTitleHoverLevel(1)}
+                  onBlur={() => setTitleHoverLevel(null)}
+                  className={`title-level-pill title-level-pill-l1 group rounded-2xl px-7 py-4 text-center ${oxanium.className}`}
                 >
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <p className="title-level-tag">Level 1</p>
-                      <p className={`${orbitron.className} mt-1 text-xl uppercase tracking-[0.12em] sm:text-2xl`}>Bomb Caller</p>
-                    </div>
-                    <span className="title-difficulty">Hard</span>
-                  </div>
-                  <p className="mt-3 text-sm leading-relaxed text-slate-200 sm:text-[15px]">
-                    Convince an unknown caller to leak the disarm code before the countdown reaches zero.
-                  </p>
-                  <div className="mt-4 flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-[0.16em] text-cyan-100/85">
-                    <span className="title-token">Voice Emotion</span>
-                    <span className="title-token">4 Tutorial Stages</span>
-                    <span className="title-token">Bomb Timer</span>
-                  </div>
-                  <p className="mt-4 text-xs font-bold uppercase tracking-[0.16em] text-cyan-100/90">Start Mission -&gt;</p>
+                  <span className="title-level-pill-text">Level 1</span>
                 </button>
 
                 <button
                   id="level-2-start-btn"
                   type="button"
                   onClick={() => startGameSequence(false, 2)}
-                  className="title-level-card title-level-card-l2 group rounded-2xl p-4 text-left sm:p-5"
+                  onMouseEnter={() => setTitleHoverLevel(2)}
+                  onFocus={() => setTitleHoverLevel(2)}
+                  onBlur={() => setTitleHoverLevel(null)}
+                  className={`title-level-pill title-level-pill-l2 group rounded-2xl px-7 py-4 text-center ${oxanium.className}`}
                 >
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <p className="title-level-tag">Level 2</p>
-                      <p className={`${orbitron.className} mt-1 text-xl uppercase tracking-[0.12em] sm:text-2xl`}>Mochi Heist</p>
-                    </div>
-                    <span className="title-difficulty">Insane</span>
-                  </div>
-                  <p className="mt-3 text-sm leading-relaxed text-slate-100 sm:text-[15px]">
-                    Outplay Mochi, recover your Suica card, then hit the IC gate under pressure before the last train leaves.
-                  </p>
-                  <div className="mt-4 flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-[0.16em] text-amber-100/85">
-                    <span className="title-token">Train SFX</span>
-                    <span className="title-token">Gate Minigame</span>
-                    <span className="title-token">No Mercy</span>
-                  </div>
-                  <p className="mt-4 text-xs font-bold uppercase tracking-[0.16em] text-amber-100/90">Start Mission -&gt;</p>
+                  <span className="title-level-pill-text">Level 2</span>
                 </button>
               </div>
 
-              <div className="mt-6 flex flex-wrap items-center justify-between gap-3 text-xs font-semibold uppercase tracking-[0.14em] text-slate-200/90 sm:text-sm">
-                <p className="title-enter-hint">
-                  <span className="title-keycap">Enter</span> {INTRO_PROMPT}
-                </p>
-                <p className="title-subhint">Select a level or press Enter to launch Level 1 instantly.</p>
-              </div>
             </div>
           </section>
         </div>
@@ -1762,47 +1779,46 @@ export default function Home() {
             </div>
           </div>
 
-          {canTalk ? (
-            <div
-              className={`absolute left-1/2 z-30 flex -translate-x-1/2 flex-col items-center gap-2 transition-all duration-500 ${!hasMicPrimed ? "top-[53%] -translate-y-1/2" : "bottom-5 md:bottom-6"
-                }`}
-            >
-              <button
-                type="button"
-                onClick={handleMicButtonClick}
-                disabled={
-                  !hasStarted || !canTalk || exploded || won || busy || isNpcSpeaking || !recordingSupported
-                }
-                className={`inline-flex items-center gap-2 border font-semibold uppercase transition ${canTalk && !hasMicPrimed
+          <div
+            className={`absolute left-1/2 z-30 flex -translate-x-1/2 flex-col items-center gap-2 transition-all duration-700 ease-out motion-reduce:transition-none ${!hasMicPrimed ? "top-[53%] -translate-y-1/2" : "bottom-5 md:bottom-6"
+              } ${canTalk ? "opacity-100 scale-100" : "pointer-events-none opacity-0 scale-95"
+              }`}
+          >
+            <button
+              type="button"
+              onClick={handleMicButtonClick}
+              disabled={
+                !hasStarted || !canTalk || exploded || won || busy || isNpcSpeaking || !recordingSupported
+              }
+              className={`inline-flex items-center gap-2 border font-semibold uppercase transition-all duration-500 ease-out ${canTalk && !hasMicPrimed
                   ? "rounded-xl border-2 px-8 py-4 text-base tracking-[0.22em] md:px-12 md:py-5 md:text-4xl"
                   : "rounded-md px-5 py-2 text-[11px] tracking-[0.2em] md:text-xs"
                   } ${isRecording
                     ? "border-rose-300/70 bg-rose-500/22 text-rose-100 shadow-[0_0_20px_rgba(244,63,94,0.45)]"
                     : "border-emerald-200/55 bg-black/58 text-emerald-100 shadow-[0_0_18px_rgba(16,185,129,0.28)]"
                   } disabled:cursor-not-allowed disabled:opacity-45`}
-              >
-                <span
-                  className={`inline-flex rounded-full ring-2 ${canTalk && !hasMicPrimed ? "h-4 w-4 md:h-6 md:w-6" : "h-2.5 w-2.5"
+            >
+              <span
+                className={`inline-flex rounded-full ring-2 ${canTalk && !hasMicPrimed ? "h-4 w-4 md:h-6 md:w-6" : "h-2.5 w-2.5"
                     } ${isRecording
                       ? "animate-pulse bg-rose-500 ring-rose-200/45"
                       : "bg-emerald-400/70 ring-emerald-200/35"
                     }`}
-                />
-                {isRecording ? "Click to Send" : "Click to Record"}
-              </button>
+              />
+              {isRecording ? "Click to Send" : "Click to Speak"}
+            </button>
 
-              {isNpcSpeaking || busy || isRecording ? (
-                <p
-                  className={`pointer-events-none rounded-sm bg-black/35 uppercase text-emerald-100/90 ${!hasMicPrimed
+            {isNpcSpeaking || busy || isRecording ? (
+              <p
+                className={`pointer-events-none rounded-sm bg-black/35 uppercase text-emerald-100/90 ${!hasMicPrimed
                     ? "px-4 py-1 text-sm tracking-[0.22em] md:text-xl"
                     : "px-2 py-0.5 text-[10px] tracking-[0.16em]"
                     }`}
-                >
-                  {isNpcSpeaking ? "Caller speaking..." : busy ? "Analyzing..." : "Recording live"}
-                </p>
-              ) : null}
-            </div>
-          ) : null}
+              >
+                {isNpcSpeaking ? "Caller speaking..." : busy ? "Analyzing..." : "Recording live"}
+              </p>
+            ) : null}
+          </div>
 
           {micError ? (
             <p className="pointer-events-none absolute bottom-24 left-1/2 z-30 -translate-x-1/2 rounded-lg border border-amber-500/55 bg-amber-500/20 px-3 py-2 text-xs text-amber-200 md:text-sm">
