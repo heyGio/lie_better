@@ -277,7 +277,7 @@ function safeFallback(input: EvaluateInput): EvaluateOutput {
   return {
     npcReply:
       input.level === 2
-        ? "Mrrp... signal glitch. Say it again clearly."
+        ? "Miao... signal glitch. Say it again clearly."
         : "Line glitch. Repeat your line, sharper.",
     scores: {
       persuasion: 4,
@@ -805,7 +805,7 @@ function applyLevelRules(base: EvaluateOutput, input: EvaluateInput): EvaluateOu
           output.failureReason = "Trust building in progress. Suspicion not low enough yet.";
         } else {
           output.npcMood = "suspicious";
-          output.npcReply = "Mrrp. I'm keeping this shiny Suica card. Try being nicer to me.";
+          output.npcReply = "Miao. I'm keeping this shiny Suica card. Try being nicer to me.";
           output.failureReason = "Player needs to show happy or sad emotion to lower suspicion.";
         }
       }
@@ -834,7 +834,7 @@ function applyLevelRules(base: EvaluateOutput, input: EvaluateInput): EvaluateOu
         output.revealCode = false;
         output.code = null;
         output.npcMood = "calm";
-        output.npcReply = "Mrrp. I told you I like being petted...";
+        output.npcReply = "Miao. I told you I like being petted...";
         output.failureReason = "Player must explicitly express intent to pet/cuddle.";
       }
     }

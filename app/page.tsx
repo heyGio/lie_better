@@ -59,14 +59,20 @@ const START_SUSPICION = 50;
 const OPENING_LINE_LEVEL_1 =
   "I planted a bomb at your hackathon. You have 2 minutes. Convince me to give you the code.";
 const OPENING_LINE_LEVEL_2 =
-  "Mrrp! I took your shiny Suica card. It's mine now! You're not getting on that train.";
+  "Miao! I took your shiny Suica card. It's mine now! You're not getting on that train.";
 const DARKEN_DELAY_MS = 180;
 const OPENING_LINE_DELAY_MS = 980;
 const BOMB_TIMER_APPEAR_DELAY_MS = 2000;
+const BOMB_TICK_VOLUME = 0.3;
+const LEVEL1_BGM_SRC = "/assets/Concrete_Empire_2026-02-28T212713.mp3";
+const LEVEL2_BGM_SRC = "/assets/Phantom_Yamanote.mp3";
 const INTRO_TITLE = "Lie Better";
 const INTRO_PROMPT = "press enter....";
-const CALLER_NAME = "Unknown Caller";
+const LEVEL1_CALLER_NAME = "Unknown Caller";
+const LEVEL2_CALLER_NAME = "Mochi";
 const LEVEL1_FINAL_STAGE = 4;
+const IC_GATE_HITBOX_WIDTH_RATIO = 0.16;
+const IC_GATE_HITBOX_HEIGHT_RATIO = 0.16;
 
 const PLAYER_EMOTIONS: PlayerEmotion[] = [
   "angry",
@@ -224,6 +230,9 @@ export default function Home() {
   const [destroyedBackgroundVisible, setDestroyedBackgroundVisible] = useState(false);
   const [isSceneShaking, setIsSceneShaking] = useState(false);
   const [isBombTimerVisible, setIsBombTimerVisible] = useState(false);
+  const [isSuicaChallengeActive, setIsSuicaChallengeActive] = useState(false);
+  const [isSuicaGateHot, setIsSuicaGateHot] = useState(false);
+  const [suicaCursorPosition, setSuicaCursorPosition] = useState({ x: 0, y: 0 });
 
   const [statusLine, setStatusLine] = useState("Awaiting call start...");
 
@@ -238,7 +247,10 @@ export default function Home() {
   const discardRecordingRef = useRef(false);
   const recordingSessionRef = useRef(0);
   const audioUnlockedRef = useRef(false);
+  const previousTimerValueRef = useRef(START_TIME);
   const bgmAudioRef = useRef<HTMLAudioElement | null>(null);
+  const suicaGateRef = useRef<HTMLDivElement | null>(null);
+  const pointerPositionRef = useRef({ x: 0, y: 0 });
 
   const darkenTimeoutRef = useRef<number | null>(null);
   const openingLineTimeoutRef = useRef<number | null>(null);
@@ -544,7 +556,18 @@ export default function Home() {
 
         if (data.revealCode && data.code) {
           setRevealedCode(data.code);
-          setStatusLine("Code leaked. Enter it on the bomb panel.");
+          if (currentLevel === 2) {
+            setIsSuicaChallengeActive(true);
+            setCanTalk(false);
+            setSuicaCursorPosition(pointerPositionRef.current);
+            setStatusLine("🪪  Move your Suica card onto the red IC target.");
+            console.info("🚉  [Level2] Suica gate challenge started", {
+              cursor: pointerPositionRef.current,
+              stage: data.nextStage
+            });
+          } else {
+            setStatusLine("Code leaked. Enter it on the bomb panel.");
+          }
         } else if (data.shouldHangUp) {
           setStatusLine("Caller mocks you. Keep trying before the timer hits zero.");
         } else {
@@ -748,6 +771,77 @@ export default function Home() {
     }
   }, []);
 
+  const playBombTick = useCallback(() => {
+    if (typeof window === "undefined" || typeof window.AudioContext === "undefined") return;
+
+    try {
+      const ctx = new window.AudioContext();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = "square";
+      osc.frequency.setValueAtTime(920, ctx.currentTime);
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(BOMB_TICK_VOLUME, ctx.currentTime + 0.004);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.085);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.09);
+      window.setTimeout(() => {
+        void ctx.close();
+      }, 180);
+    } catch (error) {
+      console.warn("⚠️  [Bomb] Tick sound failed", error);
+    }
+  }, []);
+
+  const completeSuicaGateChallenge = useCallback(() => {
+    if (!isSuicaChallengeActive || currentLevel !== 2 || won || exploded) return;
+
+    setIsSuicaChallengeActive(false);
+    setIsSuicaGateHot(false);
+    setTimerRunning(false);
+    setCanTalk(false);
+    setWon(true);
+    setStatusLine("🚉  Suica scanned. Gate opened. You caught the train.");
+    console.info("✅  [Level2] Suica scanned at IC gate", { timeRemaining });
+  }, [currentLevel, exploded, isSuicaChallengeActive, timeRemaining, won]);
+
+  const evaluateSuicaGateHit = useCallback(
+    (pointerX: number, pointerY: number) => {
+      if (!isSuicaChallengeActive || currentLevel !== 2 || won || exploded) {
+        setIsSuicaGateHot(false);
+        return;
+      }
+
+      const gateElement = suicaGateRef.current;
+      if (!gateElement) {
+        setIsSuicaGateHot(false);
+        return;
+      }
+
+      const gateRect = gateElement.getBoundingClientRect();
+      const hitboxWidth = gateRect.width * IC_GATE_HITBOX_WIDTH_RATIO;
+      const hitboxHeight = gateRect.height * IC_GATE_HITBOX_HEIGHT_RATIO;
+      const hitboxLeft = gateRect.left + gateRect.width * 0.5 - hitboxWidth * 0.5;
+      const hitboxTop = gateRect.top + gateRect.height * 0.5 - hitboxHeight * 0.5;
+      const isInsideHitbox =
+        pointerX >= hitboxLeft &&
+        pointerX <= hitboxLeft + hitboxWidth &&
+        pointerY >= hitboxTop &&
+        pointerY <= hitboxTop + hitboxHeight;
+
+      setIsSuicaGateHot(isInsideHitbox);
+
+      if (isInsideHitbox) {
+        completeSuicaGateChallenge();
+      }
+    },
+    [completeSuicaGateChallenge, currentLevel, exploded, isSuicaChallengeActive, won]
+  );
+
   const handleCodeSubmit = useCallback((overrideCode?: string) => {
     if (won || exploded) return;
 
@@ -809,6 +903,9 @@ export default function Home() {
     setDestroyedBackgroundVisible(false);
     setIsSceneShaking(false);
     setIsBombTimerVisible(false);
+    setIsSuicaChallengeActive(false);
+    setIsSuicaGateHot(false);
+    setSuicaCursorPosition(pointerPositionRef.current);
     setRevealedCode(null);
     setPlayerCodeInput("");
     setSuspicion(START_SUSPICION);
@@ -829,6 +926,7 @@ export default function Home() {
     setShowOpeningLine(false);
     setCanTalk(false);
     setTimerRunning(false);
+    previousTimerValueRef.current = START_TIME;
     setTimeRemaining(START_TIME);
     setStatusLine("Connecting secure call...");
     setMicError("");
@@ -845,11 +943,13 @@ export default function Home() {
 
     openingLineTimeoutRef.current = window.setTimeout(() => {
       setShowOpeningLine(true);
-      const startLine = (levelToPlay ?? currentLevel) === 1 ? OPENING_LINE_LEVEL_1 : OPENING_LINE_LEVEL_2;
+      const targetLevel = levelToPlay ?? currentLevel;
+      const startLine = targetLevel === 1 ? OPENING_LINE_LEVEL_1 : OPENING_LINE_LEVEL_2;
+      const callerName = targetLevel === 2 ? LEVEL2_CALLER_NAME : LEVEL1_CALLER_NAME;
       replaceHistory([{ role: "npc", content: startLine }]);
       setTimerRunning(true);
-      setStatusLine("Unknown Caller is speaking...");
-      void speakNpcLine(startLine, "suspicious", START_SUSPICION, (levelToPlay ?? currentLevel), () => {
+      setStatusLine(`${callerName} is speaking...`);
+      void speakNpcLine(startLine, "suspicious", START_SUSPICION, targetLevel, () => {
         setCanTalk(true);
         setStatusLine("Your turn. Click the mic button to record.");
         console.info("🎙️  [Intro] Click-to-record mode enabled after opening line");
@@ -902,6 +1002,46 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const initial = {
+      x: Math.round(window.innerWidth * 0.5),
+      y: Math.round(window.innerHeight * 0.5)
+    };
+    pointerPositionRef.current = initial;
+    setSuicaCursorPosition(initial);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const onMouseMove = (event: MouseEvent) => {
+      const next = { x: event.clientX, y: event.clientY };
+      pointerPositionRef.current = next;
+
+      if (!isSuicaChallengeActive) return;
+
+      setSuicaCursorPosition(next);
+      evaluateSuicaGateHit(next.x, next.y);
+    };
+
+    window.addEventListener("mousemove", onMouseMove, { passive: true });
+    return () => {
+      window.removeEventListener("mousemove", onMouseMove);
+    };
+  }, [evaluateSuicaGateHit, isSuicaChallengeActive]);
+
+  useEffect(() => {
+    if (isSuicaChallengeActive) return;
+    setIsSuicaGateHot(false);
+  }, [isSuicaChallengeActive]);
+
+  useEffect(() => {
+    if (!isSuicaChallengeActive) return;
+    evaluateSuicaGateHit(pointerPositionRef.current.x, pointerPositionRef.current.y);
+  }, [evaluateSuicaGateHit, isSuicaChallengeActive]);
+
+  useEffect(() => {
     if (hasStarted) return;
 
     const onEnterDown = (event: KeyboardEvent) => {
@@ -921,19 +1061,39 @@ export default function Home() {
   useEffect(() => {
     if (typeof window === "undefined") return;
 
+    const targetBgm = currentLevel === 2 ? LEVEL2_BGM_SRC : LEVEL1_BGM_SRC;
+
     if (!bgmAudioRef.current) {
-      const audio = new Audio("/assets/Concrete_Empire_2026-02-28T212713.mp3");
+      const audio = new Audio(targetBgm);
       audio.loop = true;
       audio.volume = 0.15;
       bgmAudioRef.current = audio;
     }
 
     const bgm = bgmAudioRef.current;
-    const shouldPlay = (!hasStarted || currentLevel === 1) && !exploded && !won;
+    const resolvedTargetBgm = new URL(targetBgm, window.location.origin).href;
+
+    if (bgm.src !== resolvedTargetBgm) {
+      bgm.pause();
+      bgm.src = targetBgm;
+      bgm.currentTime = 0;
+      console.info("🎵  [BGM] Track switched", {
+        level: currentLevel,
+        track: targetBgm
+      });
+    }
+
+    const shouldPlay = !exploded && !won && (!hasStarted || currentLevel === 1 || currentLevel === 2);
 
     const tryPlay = () => {
       if (shouldPlay && bgm.paused) {
-        bgm.play().catch(() => { });
+        bgm.play().catch((error) => {
+          console.warn("⚠️  [BGM] Browser blocked background music", {
+            level: currentLevel,
+            track: targetBgm,
+            error
+          });
+        });
       }
     };
 
@@ -1020,10 +1180,27 @@ export default function Home() {
   }, [exploded, timerRunning, triggerExplosion, won]);
 
   useEffect(() => {
+    if (!timerRunning || exploded || won || currentLevel !== 1) {
+      previousTimerValueRef.current = timeRemaining;
+      return;
+    }
+
+    if (timeRemaining > 0 && timeRemaining < previousTimerValueRef.current) {
+      playBombTick();
+    }
+
+    previousTimerValueRef.current = timeRemaining;
+  }, [currentLevel, exploded, playBombTick, timeRemaining, timerRunning, won]);
+
+  useEffect(() => {
     if (!exploded) return;
 
     void unlockAudioPlayback();
-    void playExplosionSound();
+    if (currentLevel === 1) {
+      void playExplosionSound();
+    } else {
+      console.info("🔇  [SFX] Level 2 lose: boom disabled");
+    }
     setIsSceneShaking(true);
     setExplosionFlashVisible(true);
     setDestroyedBackgroundVisible(false);
@@ -1045,7 +1222,7 @@ export default function Home() {
       window.clearTimeout(showDestroyed);
       window.clearTimeout(stopShake);
     };
-  }, [exploded, playExplosionSound, unlockAudioPlayback]);
+  }, [currentLevel, exploded, playExplosionSound, unlockAudioPlayback]);
 
   useEffect(() => {
     if (!won) return;
@@ -1072,15 +1249,6 @@ export default function Home() {
     return currentLevel === 1 ? OPENING_LINE_LEVEL_1 : OPENING_LINE_LEVEL_2;
   }, [history, currentLevel]);
 
-  const characterImageSrc = useMemo(() => {
-    if (currentLevel === 2) {
-      return "/assets/mochi_cat.png";
-    }
-    if (revealedCode) return "/assets/defeat.png";
-    const playerTurns = history.filter((line) => line.role === "player").length;
-    return playerTurns >= 2 ? "/assets/angrycat.png" : "/assets/cat2.png";
-  }, [history, revealedCode, currentLevel]);
-
   const topEmotionDetail = useMemo(() => {
     if (!lastEmotionScores) return null;
 
@@ -1094,6 +1262,20 @@ export default function Home() {
   const recognizedEmotion = lastEmotion ?? topEmotionDetail?.emotion ?? null;
   const recognizedEmotionVisual = recognizedEmotion ? EMOTION_VISUALS[recognizedEmotion] : null;
 
+  const characterImageSrc = useMemo(() => {
+    if (currentLevel === 2) {
+      if (won) return "/assets/NPC2win.png";
+      if (recognizedEmotion === "angry") return "/assets/NPC2angry.png";
+      if (recognizedEmotion === "fear") return "/assets/NPC2scared.png";
+      return "/assets/NPC2.png";
+    }
+    if (revealedCode) return "/assets/defeat.png";
+    const playerTurns = history.filter((line) => line.role === "player").length;
+    return playerTurns >= 2 ? "/assets/angrycat.png" : "/assets/cat2.png";
+  }, [currentLevel, history, recognizedEmotion, revealedCode, won]);
+
+  const callerName = currentLevel === 2 ? LEVEL2_CALLER_NAME : LEVEL1_CALLER_NAME;
+
   return (
     <main className={`relative h-screen w-screen overflow-hidden select-none ${isSceneShaking ? "explode-shake" : ""}`}>
       <p className="sr-only" aria-live="polite">
@@ -1102,7 +1284,7 @@ export default function Home() {
 
       <div className="absolute inset-0 z-0">
         <Image
-          src={currentLevel === 1 ? "/assets/background_1.png" : "/assets/shibuya.png"}
+          src={currentLevel === 1 ? "/assets/background_1.png" : "/assets/background_2.png"}
           alt="Background"
           fill
           priority
@@ -1153,12 +1335,12 @@ export default function Home() {
           {destroyedBackgroundVisible ? (
             <div className="pointer-events-none absolute inset-0 z-[38]">
               <Image
-                src={currentLevel === 1 ? "/assets/background_blowup.png" : "/assets/shibuya.png"}
+                src={currentLevel === 1 ? "/assets/background_blowup.png" : "/assets/background_fail_2.png"}
                 alt="Devastated background"
                 fill
                 priority
                 sizes="100vw"
-                className={`object-cover ${currentLevel === 2 ? "grayscale contrast-125" : ""}`}
+                className="object-cover"
               />
             </div>
           ) : null}
@@ -1166,8 +1348,8 @@ export default function Home() {
           {explosionFlashVisible ? <div className="pointer-events-none absolute inset-0 z-[45] bg-white/95" /> : null}
 
           {destroyedBackgroundVisible && !explosionFlashVisible ? (
-            <div className="pointer-events-auto absolute bottom-7 left-1/2 z-[46] flex -translate-x-1/2 flex-col items-center gap-4 md:bottom-9">
-              <p className="rounded-md border border-red-100/55 bg-black/58 px-4 py-1 text-xs font-semibold uppercase tracking-[0.22em] text-red-50 md:text-sm">
+            <div className="pointer-events-auto absolute inset-0 z-[46] flex flex-col items-center justify-center gap-6 px-4 text-center">
+              <p className="text-[clamp(2.2rem,8.8vw,6.4rem)] font-black uppercase tracking-[0.2em] text-red-500 drop-shadow-[0_0_28px_rgba(239,68,68,0.95)]">
                 {currentLevel === 1 ? "DEVICE DETONATED" : "MISSED THE TRAIN"}
               </p>
               <button
@@ -1214,6 +1396,49 @@ export default function Home() {
             </div>
           ) : null}
 
+          {currentLevel === 2 && isSuicaChallengeActive && !won ? (
+            <>
+              <div className="pointer-events-none absolute right-[3vw] top-[25%] z-30 w-[clamp(170px,18vw,280px)]">
+                <div ref={suicaGateRef} className="relative aspect-[982/1266] w-full">
+                  <Image
+                    src="/assets/icpassage.png"
+                    alt="IC gate"
+                    fill
+                    priority
+                    sizes="(max-width: 768px) 28vw, 18vw"
+                    className="object-contain drop-shadow-[0_0_20px_rgba(56,189,248,0.35)]"
+                  />
+                  <div
+                    className={`absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-md border border-red-100/85 bg-red-300/35 shadow-[0_0_14px_rgba(252,165,165,0.7)] ${isSuicaGateHot ? "bg-red-200/60 shadow-[0_0_18px_rgba(254,202,202,0.95)]" : ""
+                      }`}
+                    style={{
+                      width: `${IC_GATE_HITBOX_WIDTH_RATIO * 100}%`,
+                      height: `${IC_GATE_HITBOX_HEIGHT_RATIO * 100}%`
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div
+                className="pointer-events-none fixed z-[60]"
+                style={{
+                  left: `${suicaCursorPosition.x}px`,
+                  top: `${suicaCursorPosition.y}px`,
+                  transform: "translate(-50%, -50%)"
+                }}
+              >
+                <Image
+                  src="/assets/suica.png"
+                  alt="Suica card cursor"
+                  width={220}
+                  height={140}
+                  priority
+                  className="h-auto w-[clamp(94px,10vw,156px)] rotate-[8deg] drop-shadow-[0_0_18px_rgba(74,222,128,0.45)]"
+                />
+              </div>
+            </>
+          ) : null}
+
           {currentLevel === 1 && (
             <div className="pointer-events-none absolute right-4 top-4 z-20 rounded-lg border border-cyan-300/45 bg-slate-950/70 px-3 py-2 font-mono text-sm font-black uppercase tracking-[0.16em] text-cyan-100 md:right-8 md:top-8 md:text-base">
               Stage {stage}/{LEVEL1_FINAL_STAGE}
@@ -1227,7 +1452,7 @@ export default function Home() {
           )}
 
           {currentLevel === 1 && (
-            <div className="absolute left-3 top-[58%] z-20 w-[32vw] max-w-[520px] min-w-[230px] -translate-y-1/2 px-1 md:left-7 md:w-[29vw] md:px-0">
+            <div className="absolute left-3 top-[58%] z-20 w-[32vw] max-w-[520px] min-w-[230px] -translate-x-[20px] -translate-y-1/2 origin-left scale-[1.2409] px-1 md:left-7 md:w-[29vw] md:px-0">
               <div className="relative mx-auto aspect-[1365/768] w-full">
                 <Image
                   src="/assets/bomb2.png"
@@ -1250,7 +1475,7 @@ export default function Home() {
                   </span>
                 </div>
 
-                <div className="absolute left-[37.95%] top-[61.9%] h-[10.9%] w-[14.9%]">
+                <div className="absolute left-[35.4%] top-[57.5%] h-[10.9%] w-[14.9%]">
                   <input
                     value={playerCodeInput}
                     onChange={(event) => {
@@ -1276,7 +1501,10 @@ export default function Home() {
             </div>
           )}
 
-          <div className="relative z-20 flex h-full w-full items-end justify-end pr-3 md:pr-10 lg:pr-16">
+          <div
+            className={`relative z-20 flex h-full w-full items-end ${currentLevel === 2 ? "justify-start pl-0" : "justify-end pr-0"
+              }`}
+          >
             <div
               className={`relative h-[84vh] w-[48vw] min-w-[260px] max-w-[720px] transition-all duration-[1200ms] ease-out ${showCharacter ? "translate-x-0 scale-100 opacity-100" : "translate-x-10 scale-95 opacity-0"
                 }`}
@@ -1287,23 +1515,23 @@ export default function Home() {
                 fill
                 priority
                 sizes="(max-width: 768px) 70vw, 48vw"
-                className={`object-contain object-right drop-shadow-[0_0_55px_rgba(56,189,248,0.45)] ${isNpcSpeaking ? "npc-talking-shake" : ""
+                className={`object-contain ${currentLevel === 2 ? "object-[left_bottom]" : "object-[right_bottom]"} drop-shadow-[0_0_55px_rgba(56,189,248,0.45)] ${isNpcSpeaking ? "npc-talking-shake" : ""
                   }`}
               />
 
               <div
-                className={`pointer-events-none absolute left-[-48%] top-[10%] w-[min(420px,72vw)] rounded-2xl border border-cyan-300/40 bg-slate-950/80 px-4 py-3 text-left shadow-[0_0_30px_rgba(34,211,238,0.22)] backdrop-blur-sm transition-all duration-700 md:left-[-44%] ${showOpeningLine ? "translate-y-0 opacity-100" : "translate-y-4 opacity-0"
+                className={`pointer-events-none absolute top-[10%] w-[min(420px,72vw)] scale-[1.452] rounded-2xl border border-cyan-300/40 bg-slate-950/80 px-4 py-3 text-left shadow-[0_0_30px_rgba(34,211,238,0.22)] backdrop-blur-sm transition-all duration-700 ${currentLevel === 2 ? "left-[54vw] origin-top-left md:left-[56vw] -translate-x-[20px]" : "left-[-48%] origin-top-left md:left-[-44%]"} ${showOpeningLine ? "translate-y-0 opacity-100" : "translate-y-4 opacity-0"
                   }`}
               >
                 <div className="mb-2 flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-cyan-200/90">
                   <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-cyan-300" />
-                  {CALLER_NAME}
+                  {callerName}
                 </div>
                 <p className="text-sm text-slate-100 md:text-base">{latestNpcLine}</p>
               </div>
 
               {lastTranscript ? (
-                <div className="pointer-events-none absolute left-[-50%] top-[54%] w-[min(420px,72vw)] rounded-xl border border-fuchsia-300/35 bg-slate-950/72 px-3 py-2 text-xs text-slate-100 backdrop-blur-sm md:text-sm">
+                <div className={`pointer-events-none absolute top-[54%] w-[min(420px,72vw)] scale-[1.452] rounded-xl border border-fuchsia-300/35 bg-slate-950/72 px-3 py-2 text-xs text-slate-100 backdrop-blur-sm md:text-sm ${currentLevel === 2 ? "left-[58vw] origin-top-left md:left-[60vw] -translate-x-[20px]" : "left-[-50%] origin-top-left"}`}>
                   <p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-fuchsia-200/85">You (last)</p>
                   <p>{lastTranscript}</p>
                   {recognizedEmotion && recognizedEmotionVisual ? (

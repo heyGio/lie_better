@@ -151,3 +151,77 @@ Original prompt: Build and iterate a playable web game in this workspace, valida
 - `npm run build` ❌ (environment/workspace issue unrelated to this change):
   - Next.js lockfile patch step failed (`Cannot read properties of undefined (reading 'os')`)
   - build then failed during page data collection (`Cannot find module for page: /api/evaluate`)
+
+## 2026-03-01 - Bomb Tick SFX (User Requested)
+
+- Added bomb countdown tick sound in `app/page.tsx`, triggered once per second while the timer is actively counting down.
+- Added `BOMB_TICK_VOLUME = 0.3` and wired the synthesized tick envelope peak to that exact volume target.
+- Added `previousTimerValueRef` and a dedicated effect that plays the tick only when `timeRemaining` decreases (prevents extra ticks on non-countdown renders).
+- Reset timer-tracking ref on `startGameSequence` so restart flows begin cleanly.
+- Logging on playback failure is user-friendly and emoji-formatted:
+  - `⚠️  [Bomb] Tick sound failed`
+
+## 2026-03-01 - Validation (Bomb Tick)
+
+- `npx tsc --noEmit` ✅
+- `npx eslint app/page.tsx` ❌ (pre-existing, unrelated to this patch):
+  - `'INTRO_PROMPT' is assigned a value but never used`
+  - `'lastEmotionScore' is assigned a value but never used`
+- Playwright action-loop validation skipped in this environment (project runs on external VMs; no local gameplay runtime expected here).
+
+## 2026-03-01 - Level 2 Asset Wiring (User Requested)
+
+- Switched level-2 base background to `public/assets/background_2.png` (replaced previous `shibuya` usage in normal scene and post-failure background state).
+- Rewired level-2 NPC sprite selection in `app/page.tsx`:
+  - default: `public/assets/NPC2.png`
+  - player recognized emotion `angry`: `public/assets/NPC2angry.png`
+  - player recognized emotion `fear`: `public/assets/NPC2scared.png`
+  - level-2 win state (`won`): `public/assets/NPC2win.png`
+- Kept level-1 NPC/background behavior unchanged.
+
+## 2026-03-01 - Validation (Level 2 Assets)
+
+- `npx tsc --noEmit` ✅
+- `npx eslint app/page.tsx` ❌ (pre-existing, unrelated to this patch):
+  - `'INTRO_PROMPT' is assigned a value but never used`
+  - `'lastEmotionScore' is assigned a value but never used`
+- Playwright action-loop validation skipped in this environment (project runs on external VMs; no local gameplay runtime expected here).
+
+## 2026-03-01 - Mochi Voice Text Update
+
+- Replaced Mochi verbal marker from `Mrrp` to `Miao` across runtime game text:
+  - `app/page.tsx` level-2 opening line
+  - `app/api/evaluate/route.ts` level-2 fallback and stage feedback lines
+- Confirmed no remaining `Mrrp`/`mrrp` in `app/`, `lib/`, `types/`, `services/`.
+
+## 2026-03-01 - Validation (Mochi Text)
+
+- `npx tsc --noEmit` ✅
+
+## 2026-03-01 - Level 2 BGM Track Switch (User Requested)
+
+- Updated BGM routing in `app/page.tsx` to use level-specific tracks:
+  - intro + level 1: `/assets/Concrete_Empire_2026-02-28T212713.mp3`
+  - level 2: `/assets/Phantom_Yamanote.mp3`
+- Added constants for both tracks (`LEVEL1_BGM_SRC`, `LEVEL2_BGM_SRC`) and switched audio source dynamically when level changes.
+- Kept existing autoplay retry behavior (click/keydown interaction listeners) and added emoji-formatted warning logs when browser blocks playback.
+- Added explicit track-switch log:
+  - `🎵  [BGM] Track switched`
+
+## 2026-03-01 - Validation (Level 2 BGM)
+
+- `npx tsc --noEmit` ✅
+- Playwright action-loop validation skipped in this environment (project runs on external VMs; no local gameplay runtime expected here).
+
+## 2026-03-01 - Level 2 Caller Name UI (User Requested)
+
+- Updated dialog caller label in `app/page.tsx` to be level-aware:
+  - level 1: `Unknown Caller`
+  - level 2: `Mochi`
+- Replaced the hardcoded intro status line `Unknown Caller is speaking...` with dynamic caller naming based on selected level at sequence start.
+- Result: level-2 dialog box now consistently shows `Mochi` as NPC name.
+
+## 2026-03-01 - Validation (Level 2 Caller Name)
+
+- `npx tsc --noEmit` ✅
+- Playwright action-loop validation skipped in this environment (project runs on external VMs; no local gameplay runtime expected here).
