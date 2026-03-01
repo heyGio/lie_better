@@ -688,3 +688,36 @@ Original prompt: Build and iterate a playable web game in this workspace, valida
 - `python3 -m py_compile services/emotion/serve.py` ✅
 - `npx tsc --noEmit` ✅
 - Full runtime inference test not executed in this environment (VM runtime handled externally).
+
+## 2026-03-01 - Level 1 Stage 2 Emotion Rule Update (User Requested)
+
+- Updated level-1 tutorial gate in `app/api/evaluate/route.ts`:
+  - stage 2 requirement changed from `fear` to `sad`
+- Aligned all related guidance/content for consistency:
+  - stage objectives
+  - stage hints
+  - stage guidance regex patterns
+  - stage fail reasons + NPC fail lines
+  - stage success transition lines (stage 1 -> 2 and stage 2 -> 3)
+  - payload `level1Flow.stage2` text sent to LLM
+  - level-1 `emotionGuidance` context string
+- Adjusted level-1 emotion weighting to match new stage target:
+  - `sad` weight increased (`10`)
+  - `fear` weight reduced (`3`)
+
+## 2026-03-01 - Validation (Stage 2 = SAD)
+
+- `npx tsc --noEmit` ✅
+- grep check for stale "stage 2 requires fear" strings in `app/api/evaluate/route.ts` ✅
+
+## 2026-03-01 - System Prompt Asterisk Ban (User Requested)
+
+- Updated `SYSTEM_PROMPT` in `app/api/evaluate/route.ts` with an explicit rule:
+  - no asterisks around words (no `*action*` style markers)
+- Also aligned the secondary NPC-polish prompt with the same constraint.
+- Removed existing hardcoded starred line in level-2 success path:
+  - `*Purrs happily* ...` -> `Purrs happily. ...`
+
+## 2026-03-01 - Validation (Asterisk Ban)
+
+- `npx tsc --noEmit` ✅

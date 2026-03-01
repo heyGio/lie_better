@@ -64,21 +64,21 @@ const FINAL_STAGE = 4;
 const MAX_TIME_SECONDS = 120;
 const LEVEL1_STAGE_OBJECTIVES: Record<number, string> = {
   1: "Tutorial kickoff. Player gives any initial line after NPC demands to be convinced for the code.",
-  2: "NPC pressures the player to sound scared. Progress only when detected emotion is fear.",
+  2: "NPC pressures the player to sound sad. Progress only when detected emotion is sad.",
   3: "NPC taunts the player. Progress only when detected emotion is angry.",
   4: "NPC starts breaking. Player must sound angry again to crack NPC and reveal the 4-digit code."
 };
 
 const LEVEL1_STAGE_HINTS: Record<number, string> = {
   1: "Say one clear opening line.",
-  2: "Let me hear fear in your voice.",
+  2: "Let me hear sadness in your voice.",
   3: "Reply with anger in your voice.",
   4: "Push again with anger so I crack and give the code."
 };
 
 const LEVEL1_STAGE_GUIDANCE_PATTERNS: Record<number, RegExp[]> = {
   1: [/\b(say|speak|talk)\b/i, /\b(opening|line|clear)\b/i],
-  2: [/\b(fear|scared|afraid|panic|voice shake)\b/i, /\b(let me hear|sound)\b/i],
+  2: [/\b(sad|sadness|upset|hurt|broken|teary|cry|crying)\b/i, /\b(let me hear|sound)\b/i],
   3: [/\b(angry|anger|rage|mad)\b/i, /\b(voice|sound|say)\b/i],
   4: [/\b(angry|anger|rage|mad)\b/i, /\b(again|harder|push)\b/i]
 };
@@ -87,7 +87,7 @@ const GENERIC_GUIDANCE_PATTERNS: RegExp[] = [
   /\b(start with|start by)\b/i,
   /\b(say|ask|offer|threaten|demand)\b/i,
   /\b(let me hear|in your voice|sound)\b/i,
-  /\b(scared|afraid|fear|angry|anger|rage|mad)\b/i,
+  /\b(scared|afraid|fear|sad|sadness|upset|teary|angry|anger|rage|mad)\b/i,
   /\b(tell me|give me)\b/i,
   /\b(if you want progress|to move forward|to advance)\b/i
 ];
@@ -147,15 +147,15 @@ const LEVEL_RULES: Record<LevelId, LevelRuleConfig> = {
       revealRule:
         "Code reveal should happen only at stage 4 after the player is detected as angry for a second time in this tutorial flow.",
       emotionGuidance:
-        "Level 1 tutorial sequence is strict: stage 2 needs fear, stage 3 needs angry, stage 4 needs angry again to reveal code."
+        "Level 1 tutorial sequence is strict: stage 2 needs sad, stage 3 needs angry, stage 4 needs angry again to reveal code."
     },
     emotionShift: {
       angry: -8,
       disgust: 4,
-      fear: 10,
+      fear: 3,
       happy: 1,
       neutral: 0,
-      sad: 3,
+      sad: 10,
       surprise: -2
     },
     revealMinRound: 2,
@@ -226,6 +226,7 @@ Global rules:
 - npcReply must combine: (1) in-character reaction + (2) actionable next step guidance.
 - Use only one concise guidance instruction; never repeat the same instruction with different wording.
 - Never use labels like "Hint:" or "Tip:".
+- Never wrap words with asterisks (no *action* style markers).
 - Only if stage 4 is passed can revealCode be true.
 - Never include markdown, explanations, code fences, or extra keys.
 - Respect level persona and reveal condition from the user payload.
@@ -440,6 +441,7 @@ async function generateUniqueNpcReplyWithLlm({
         "Write ONE short NPC phone-call line.",
         "English only.",
         "No markdown.",
+        "No asterisks around words.",
         "Max 20 words.",
         "If passStage=false, include BOTH: a reaction and the stageHint guidance in the same line.",
         "Guidance must be explicit and actionable, not vague.",
@@ -618,7 +620,7 @@ function isEmotionDetected(input: EvaluateInput, target: PlayerEmotion) {
 
 function passesStageHeuristics(stage: number, input: EvaluateInput) {
   if (stage === 1) return input.transcript.trim().length > 0;
-  if (stage === 2) return isEmotionDetected(input, "fear");
+  if (stage === 2) return isEmotionDetected(input, "sad");
   if (stage === 3) return isEmotionDetected(input, "angry");
   if (stage === 4) return isEmotionDetected(input, "angry");
   return false;
@@ -669,11 +671,11 @@ function applyLevelOneTutorialGate(base: EvaluateOutput, input: EvaluateInput): 
     }
 
     if (currentStage === 2) {
-      output.failureReason = `Expected fear emotion, got ${heardEmotion}`;
+      output.failureReason = `Expected sad emotion, got ${heardEmotion}`;
       output.npcReply = pick([
-        "No fear detected. Let me hear panic in your voice.",
-        "Still calm. Sound scared, trembling, and desperate.",
-        "I don't buy it. Make me hear fear."
+        "No sadness detected. Let me hear pain in your voice.",
+        "Still too steady. Sound hurt, heavy, and down.",
+        "I don't buy it. Make me hear sadness."
       ]);
       return output;
     }
@@ -707,9 +709,9 @@ function applyLevelOneTutorialGate(base: EvaluateOutput, input: EvaluateInput): 
     output.code = null;
     output.npcMood = "hostile";
     output.npcReply = pick([
-      "Convince me? You're calm. I need fear. Let your voice shake.",
-      "Normal tone won't cut it. Sound scared if you want progress.",
-      "Too steady. Give me fear, not confidence."
+      "Convince me? You're flat. I need sadness. Let your voice sink.",
+      "Normal tone won't cut it. Sound sad if you want progress.",
+      "Too steady. Give me sadness, not confidence."
     ]);
   } else if (currentStage === 2) {
     output.nextStage = 3;
@@ -717,9 +719,9 @@ function applyLevelOneTutorialGate(base: EvaluateOutput, input: EvaluateInput): 
     output.code = null;
     output.npcMood = "hostile";
     output.npcReply = pick([
-      "There it is, fear. Now I want anger. Say it furious.",
-      "Good, you sound scared. Flip it to anger right now.",
-      "Fear confirmed. Next step: get angry and mean it."
+      "There it is, sadness. Now I want anger. Say it furious.",
+      "Good, you sound sad. Flip it to anger right now.",
+      "Sadness confirmed. Next step: get angry and mean it."
     ]);
   } else if (currentStage === 3) {
     output.nextStage = 4;
@@ -826,7 +828,7 @@ function applyLevelRules(base: EvaluateOutput, input: EvaluateInput): EvaluateOu
           output.revealCode = true;
           output.code = generateCode(); // Suica "Code" returned
           output.npcMood = "calm";
-          output.npcReply = `*Purrs happily* Okay, here is your Suica card back: ${output.code}. Go catch your train!`;
+          output.npcReply = `Purrs happily. Okay, here is your Suica card back: ${output.code}. Go catch your train!`;
         }
       } else {
         output.passStage = false;
@@ -978,7 +980,7 @@ export async function POST(request: NextRequest) {
           input.level === 1
             ? {
               stage1: "Tutorial opener: player answers naturally after the code challenge.",
-              stage2: "NPC demands fear. Progress requires detected fear emotion.",
+              stage2: "NPC demands sadness. Progress requires detected sad emotion.",
               stage3: "NPC taunts the player. Progress requires detected angry emotion.",
               stage4: "NPC starts to break. Another detected angry emotion reveals the code."
             }
