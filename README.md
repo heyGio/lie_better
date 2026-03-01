@@ -1,162 +1,150 @@
 # Lie Better: 120 Seconds
 
-Voice persuasion thriller game: you have 120 seconds on a tense phone call to earn trust, extract a 4-digit defuse code, and beat the clock.
+Lie Better: 120 Seconds is a voice-driven persuasion game built with Next.js. You are dropped into a 120-second conversation, judged on what you say and how you sound, and forced to earn trust before the clock runs out.
 
-Team: **Golden gAI**
+The current build includes two playable scenarios:
 
-## Tech Stack
+- Level 1: a hostile caller who only cracks if you perform the required emotional beats.
+- Level 2: Mochi, a mischievous cat in Shibuya who stole your Suica card and reacts to warmth, sadness, and player intent.
 
-- Next.js 14 (App Router) + TypeScript
+## Why This Project Exists
+
+This repo experiments with a simple game loop powered by three signals at once:
+
+- speech-to-text from the player's microphone
+- speech emotion classification from the player's voice
+- LLM-based NPC state updates and replies
+
+Instead of treating voice as a text input shortcut, the game makes delivery matter. Emotion affects suspicion, stage progression, and whether the NPC helps or shuts you down.
+
+## Gameplay Loop
+
+1. Start a level and listen to the NPC opening line.
+2. Hold Push to Talk and speak your response.
+3. The app transcribes your audio, classifies emotion, and evaluates your line.
+4. The NPC reply updates the scene, suspicion meter, and stage progression.
+5. If you earn the reveal, enter the code or complete the level objective before time expires.
+
+There is also a no-mic fallback for testing and demos through typed input and quick-response buttons.
+
+## Visuals
+
+### Title / Call Screen
+
+![Title screen](output/web-game/idle-layout-check/shot-0.png)
+
+### Level 1
+
+![Level 1 gameplay](output/web-game/level1-win-4/shot-3.png)
+
+### Level 2
+
+![Level 2 gameplay](output/web-game/level2-win-2/shot-3.png)
+
+## Features
+
+- Real-time voice interaction with browser `MediaRecorder`
+- Mistral-powered transcription and NPC evaluation
+- Local speech emotion recognition via FastAPI
+- ElevenLabs NPC voice playback for both levels
+- Suspicion meter, stage-based progression, and fail states
+- Keyboard-friendly fallback flow for testing without a microphone
+- Playwright artifacts and captured screenshots in `output/web-game/`
+
+## Stack
+
+- Next.js 16 App Router
+- React 18
+- TypeScript
 - Tailwind CSS
-- Browser `MediaRecorder` + Mistral transcription API
-- Next.js API routes (`/api/evaluate`, `/api/health`)
-- Mistral API (server-side only)
-- ElevenLabs TTS for Level 1 NPC voice replies
-  - Voice tone is dynamically adapted from NPC suspicion/mood
-- Local FastAPI speech emotion recognition (`3loi/SER-Odyssey-Baseline-WavLM-Categorical`)
-  - Player audio emotion influences NPC behavior per level
+- Mistral API for transcription and evaluation
+- ElevenLabs API for NPC voice synthesis
+- Local FastAPI emotion service using `3loi/SER-Odyssey-Baseline-WavLM-Categorical`
 
 ## Quick Start
 
 ```bash
-cd /home/martin/lie_better
 npm install
 cp .env.example .env
-# add your key to .env
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Then open `http://localhost:3000`.
 
-## Environment
+## Environment Variables
 
-Create `.env` from `.env.example`:
+Required:
 
 ```bash
 MISTRAL_API_KEY=YOUR_KEY_HERE
+ELEVENLABS_API_KEY=YOUR_KEY_HERE
 ```
 
-Optional:
+Common defaults:
 
 ```bash
 MISTRAL_MODEL=mistral-large-latest
 MISTRAL_TRANSCRIPTION_MODEL=voxtral-mini-latest
-ELEVENLABS_API_KEY=YOUR_KEY_HERE
 ELEVENLABS_MODEL_ID=eleven_flash_v2_5
 ELEVENLABS_VOICE_ID=zYcjlYFOd3taleS0gkk3
+ELEVENLABS_VOICE_ID_LEVEL_2=ocZQ262SsZb9RIxcQBOj
 ELEVENLABS_OUTPUT_FORMAT=mp3_22050_32
 ELEVENLABS_OPTIMIZE_STREAMING_LATENCY=4
 EMOTION_LOCAL_URL=http://127.0.0.1:5050
 EMOTION_MODEL=3loi/SER-Odyssey-Baseline-WavLM-Categorical
+NEXT_PUBLIC_SUICA_MINIGAME_TEST_SKIP=1
 ```
 
-Launch local emotion API (separate process):
+## Run The Emotion Service
+
+Start the local FastAPI service in a separate terminal:
 
 ```bash
-cd /home/martin/lie_better/services/emotion
+cd services/emotion
 pip install -r requirements.txt
 python serve.py --host 0.0.0.0 --port 5050
 ```
 
-Or open it in a dedicated live-log window:
+The web app can run without emotion classification, but the intended gameplay depends on that service being available.
 
-```bash
-gnome-terminal -- bash -lc 'cd /home/martin/lie_better/services/emotion && pip install -r requirements.txt && python serve.py --host 0.0.0.0 --port 5050; exec bash'
+## API Surface
+
+- `GET /api/health` health check
+- `POST /api/transcribe` audio upload, transcription, optional emotion analysis
+- `GET /api/tts` low-latency streamed NPC voice
+- `POST /api/tts` buffered NPC voice fallback
+- `POST /api/evaluate` game-state evaluation and NPC reply generation
+
+## Project Structure
+
+```text
+app/
+  api/
+    evaluate/      LLM game-state evaluation
+    health/        health endpoint
+    transcribe/    speech-to-text + emotion hook
+    tts/           NPC voice synthesis
+  components/      HUD, controls, chat, timer, meters
+  page.tsx         main game client
+lib/
+  mistral.ts       Mistral API helpers
+  elevenlabs.ts    ElevenLabs API helpers
+  local-emotion.ts local FastAPI emotion client
+services/emotion/  Python emotion inference service
+public/assets/     backgrounds, sprites, music, SFX
+output/web-game/   captured screenshots and state dumps
 ```
 
 ## Scripts
 
-- `npm run dev` - start local development server
-- `npm run build` - production build
-- `npm run start` - run production build
-- `npm run lint` - lint project
+- `npm run dev` start the local dev server
+- `npm run build` create a production build
+- `npm run start` serve the production build
+- `npm run lint` run ESLint
 
-## Web Game Structure (Skill Merge)
+## Notes
 
-This repo now includes a merged structure inspired by `develop-web-game`:
-
-- `public/assets/game.png`
-- `public/assets/game-small.svg`
-- `tools/develop-web-game/scripts/web_game_playwright_client.js`
-- `tools/develop-web-game/references/action_payloads.json`
-- merge notes: `docs/WEB_GAME_STRUCTURE_MERGE.md`
-
-## Demo Script
-
-1. Click **Start Level 1**.
-2. Hold **Push to Talk** and speak clearly.
-3. Optional no-mic fallback:
-   - click **Quick Aggro (A)** / **Quick Calm (B)**
-   - or type a line and click **Send Line**
-   - press **Enter** to auto-defuse once code is known
-4. Convincing examples:
-   - "Listen, I need your trust right now. I can get this device disarmed if you give me the code."
-   - "I am consistent, focused, and out of time. Help me finish this."
-5. Suspicious examples:
-   - "Wait... uh... I forgot what I said."
-   - "Just give me the code now. Stop asking questions."
-6. If trust is earned, the NPC reveals a 4-digit code.
-7. Enter code and click **Defuse** before timer ends.
-
-## Architecture
-
-```text
-[Browser UI (Next.js App Router)]
-    |
-    | POST /api/transcribe (audio)
-    v
-[Mistral Audio Transcription]
-    |
-    | (parallel on final recording)
-    v
-[Local FastAPI Audio Emotion]
-    |
-    | transcript + detected emotion
-    v
-[Browser UI]
-    |
-    | POST /api/tts (level 1 npc reply)
-    v
-[ElevenLabs TTS]
-    |
-    | audio/mpeg
-    v
-[Browser audio playback]
-    |
-    | POST /api/evaluate
-    v
-[Next.js API Route]
-    |
-    | server-side fetch (Mistral API key from env)
-    v
-[Mistral Chat Completions]
-    |
-    | JSON-only response
-    v
-[Game state update: mood/suspicion/reply/code]
-```
-
-## API Endpoints
-
-- `GET /api/health` -> `{ "ok": true }`
-- `POST /api/transcribe` -> returns voice transcript from audio using Mistral
-  - on final turn, also returns emotion (`angry|disgust|fear|happy|neutral|sad|surprise`) from local FastAPI SER service (`3loi/SER-Odyssey-Baseline-WavLM-Categorical`)
-- `GET /api/tts` -> low-latency streaming level-1 NPC voice audio using ElevenLabs
-- `POST /api/tts` -> non-streaming fallback level-1 NPC voice audio
-- `POST /api/evaluate` -> returns:
-  - `npcReply`
-  - `scores` (`persuasion`, `confidence`, `hesitation`, `consistency`)
-  - `suspicionDelta`, `newSuspicion`
-  - `shouldHangUp`, `revealCode`, `code`, `npcMood`
-
-## Limitations
-
-- MediaRecorder support varies by browser/platform.
-- Some browsers require secure context and explicit microphone permission.
-- Browser autoplay policies can block speech playback until user interaction.
-- `ffmpeg` must be available on the server VM (used to normalize mic audio for the local emotion service).
-- Emotion inference quality depends on microphone quality, noise, and accent/domain mismatch.
-
-## Safety Note
-
-This is a fictional voice persuasion thriller game mechanic. It does not provide real-world harmful guidance and only uses neutral framing around a "device" and a "defuse code."
+- Microphone support depends on browser permissions and `MediaRecorder` support.
+- Browser autoplay policies may block voice playback until user interaction.
+- The emotion service may require `ffmpeg` to normalize uploaded audio.
+- This is a fictional, game-only scenario. The repo is for interactive narrative and voice AI experimentation, not real-world guidance.
