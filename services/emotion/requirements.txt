@@ -10,7 +10,7 @@
 
 torch
 torchaudio
-speechbrain>=1.0.2
+transformers>=4.46
 librosa>=0.10
 soundfile
 fastapi>=0.111

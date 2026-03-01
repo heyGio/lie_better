@@ -13,7 +13,7 @@ Team: **Golden gAI**
 - Mistral API (server-side only)
 - ElevenLabs TTS for Level 1 NPC voice replies
   - Voice tone is dynamically adapted from NPC suspicion/mood
-- Local FastAPI speech emotion recognition (`speechbrain/emotion-recognition-wav2vec2-IEMOCAP`)
+- Local FastAPI speech emotion recognition (`3loi/SER-Odyssey-Baseline-WavLM-Categorical`)
   - Player audio emotion influences NPC behavior per level
 
 ## Quick Start
@@ -47,7 +47,7 @@ ELEVENLABS_VOICE_ID=zYcjlYFOd3taleS0gkk3
 ELEVENLABS_OUTPUT_FORMAT=mp3_22050_32
 ELEVENLABS_OPTIMIZE_STREAMING_LATENCY=4
 EMOTION_LOCAL_URL=http://127.0.0.1:5050
-EMOTION_MODEL=speechbrain/emotion-recognition-wav2vec2-IEMOCAP
+EMOTION_MODEL=3loi/SER-Odyssey-Baseline-WavLM-Categorical
 ```
 
 Launch local emotion API (separate process):
@@ -140,7 +140,7 @@ This repo now includes a merged structure inspired by `develop-web-game`:
 
 - `GET /api/health` -> `{ "ok": true }`
 - `POST /api/transcribe` -> returns voice transcript from audio using Mistral
-  - on final turn, also returns emotion (`angry|disgust|fear|happy|neutral|sad|surprise`) from local FastAPI SpeechBrain service
+  - on final turn, also returns emotion (`angry|disgust|fear|happy|neutral|sad|surprise`) from local FastAPI SER service (`3loi/SER-Odyssey-Baseline-WavLM-Categorical`)
 - `GET /api/tts` -> low-latency streaming level-1 NPC voice audio using ElevenLabs
 - `POST /api/tts` -> non-streaming fallback level-1 NPC voice audio
 - `POST /api/evaluate` -> returns:

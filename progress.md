@@ -640,3 +640,51 @@ Original prompt: Build and iterate a playable web game in this workspace, valida
 
 - `npx tsc --noEmit` ✅
 - grep check for Gemini/Google code references in active files ✅ (none found)
+
+## 2026-03-01 - Level 1 Webcam CRT + Emotion Label Cleanup (User Requested)
+
+- Added a live webcam panel above the level-1 bomb in `app/page.tsx`.
+- Reused existing retro filter layers from `app/globals.css`:
+  - `webcam-crt-video`
+  - `webcam-crt-rgb`
+  - `webcam-crt-scanlines`
+  - `webcam-crt-noise`
+  - `webcam-crt-vignette`
+- Implemented webcam lifecycle management in `app/page.tsx`:
+  - starts on active level-1 play session
+  - stops when leaving level 1 / on win / on explosion / on unmount
+  - includes emoji-friendly logs and camera-permission fallback text
+- Updated emotion line UI:
+  - removed confidence percentage rendering
+  - changed wording from `You sound ...` to `You look ...`
+- Removed now-unused local state `lastEmotionScore` from `app/page.tsx`.
+
+## 2026-03-01 - Validation (Webcam + Emotion Label)
+
+- `npx tsc --noEmit` ✅
+- `npx eslint app/page.tsx` ❌ (environment/config issue unrelated to this patch):
+  - ESLint crashed with `TypeError: Converting circular structure to JSON` from `.eslintrc.json` resolution.
+- Playwright action-loop validation not executed in this environment because runtime/gameplay is operated on external VMs.
+
+## 2026-03-01 - Emotion Model Switch to 3loi Odyssey (User Requested)
+
+- Replaced local FastAPI emotion backend implementation in `services/emotion/serve.py`:
+  - removed SpeechBrain loader
+  - now loads `3loi/SER-Odyssey-Baseline-WavLM-Categorical` with `transformers` (`trust_remote_code=True`)
+  - keeps response shape compatibility: `[[{label, score}, ...]]`
+- Added Odyssey label normalization to game label set:
+  - maps `Angry/Sad/Happy/Surprise/Fear/Disgust/Neutral` directly
+  - folds `Contempt -> disgust` to stay within the game's predefined 7 emotions
+- Updated emotion service dependencies in `services/emotion/requirements.txt`:
+  - removed `speechbrain`
+  - added `transformers`
+- Updated model defaults across app/docs:
+  - `.env.example`
+  - `lib/local-emotion.ts`
+  - `README.md`
+
+## 2026-03-01 - Validation (Odyssey Model Switch)
+
+- `python3 -m py_compile services/emotion/serve.py` ✅
+- `npx tsc --noEmit` ✅
+- Full runtime inference test not executed in this environment (VM runtime handled externally).

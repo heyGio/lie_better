@@ -1,5 +1,5 @@
 const DEFAULT_LOCAL_EMOTION_URL = "http://127.0.0.1:5050";
-const DEFAULT_LOCAL_EMOTION_MODEL = "speechbrain/emotion-recognition-wav2vec2-IEMOCAP";
+const DEFAULT_LOCAL_EMOTION_MODEL = "3loi/SER-Odyssey-Baseline-WavLM-Categorical";
 const LOCAL_EMOTION_URL = (process.env.EMOTION_LOCAL_URL ?? DEFAULT_LOCAL_EMOTION_URL).trim();
 
 const EMOTIONS = ["angry", "disgust", "fear", "happy", "neutral", "sad", "surprise"] as const;

@@ -240,7 +240,6 @@ export default function Home() {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [lastTranscript, setLastTranscript] = useState("");
   const [lastEmotion, setLastEmotion] = useState<PlayerEmotion | null>(null);
-  const [lastEmotionScore, setLastEmotionScore] = useState<number | null>(null);
   const [lastEmotionScores, setLastEmotionScores] = useState<EmotionScores | null>(null);
 
   const [recordingSupported, setRecordingSupported] = useState(false);
@@ -250,6 +249,8 @@ export default function Home() {
   const [micError, setMicError] = useState("");
   const [isNpcSpeaking, setIsNpcSpeaking] = useState(false);
   const [hasMicPrimed, setHasMicPrimed] = useState(false);
+  const [isWebcamLive, setIsWebcamLive] = useState(false);
+  const [webcamError, setWebcamError] = useState("");
 
   const [revealedCode, setRevealedCode] = useState<string | null>(null);
   const [playerCodeInput, setPlayerCodeInput] = useState("");
@@ -272,6 +273,8 @@ export default function Home() {
   const explosionAudioRef = useRef<HTMLAudioElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
+  const webcamStreamRef = useRef<MediaStream | null>(null);
+  const webcamVideoRef = useRef<HTMLVideoElement | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const discardRecordingRef = useRef(false);
   const recordingSessionRef = useRef(0);
@@ -470,6 +473,32 @@ export default function Home() {
     mediaStreamRef.current = null;
   }, []);
 
+  const attachWebcamVideo = useCallback((node: HTMLVideoElement | null) => {
+    webcamVideoRef.current = node;
+    if (!node || !webcamStreamRef.current) return;
+    node.srcObject = webcamStreamRef.current;
+    void node.play().catch((error) => {
+      console.warn("⚠️  [Webcam] Video autoplay blocked", error);
+    });
+  }, []);
+
+  const releaseWebcam = useCallback(() => {
+    const stream = webcamStreamRef.current;
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop());
+      webcamStreamRef.current = null;
+      console.info("📷  [Webcam] Camera stream stopped");
+    }
+
+    const video = webcamVideoRef.current;
+    if (video) {
+      video.pause();
+      video.srcObject = null;
+    }
+
+    setIsWebcamLive(false);
+  }, []);
+
   const stopRecording = useCallback((discard: boolean = false) => {
     const recorder = mediaRecorderRef.current;
     if (!recorder) {
@@ -553,7 +582,6 @@ export default function Home() {
       setLoading(true);
       setLastTranscript(transcript);
       setLastEmotion(emotion);
-      setLastEmotionScore(emotionScore);
       setLastEmotionScores(emotionScores);
 
       const playerLine: HistoryItem = { role: "player", content: transcript.trim() };
@@ -1042,7 +1070,6 @@ export default function Home() {
     setStage(1);
     setLastTranscript("");
     setLastEmotion(null);
-    setLastEmotionScore(null);
     setLastEmotionScores(null);
     setIsRecording(false);
     setIsTranscribing(false);
@@ -1129,6 +1156,75 @@ export default function Home() {
     setRecordingSupported(hasMediaRecorder);
     console.info("🎛️  [Init] Microphone support", { hasMediaRecorder });
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    if (!hasStarted || currentLevel !== 1 || exploded || won) {
+      releaseWebcam();
+      return;
+    }
+
+    if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function") {
+      setIsWebcamLive(false);
+      setWebcamError("Camera unsupported in this browser.");
+      return;
+    }
+
+    let cancelled = false;
+
+    const startWebcam = async () => {
+      if (webcamStreamRef.current) {
+        const video = webcamVideoRef.current;
+        if (video && video.srcObject !== webcamStreamRef.current) {
+          video.srcObject = webcamStreamRef.current;
+        }
+        setIsWebcamLive(true);
+        setWebcamError("");
+        return;
+      }
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: "user",
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            frameRate: { ideal: 24, max: 30 }
+          },
+          audio: false
+        });
+
+        if (cancelled) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+
+        webcamStreamRef.current = stream;
+        const video = webcamVideoRef.current;
+        if (video) {
+          video.srcObject = stream;
+          await video.play().catch((error) => {
+            console.warn("⚠️  [Webcam] Video autoplay blocked", error);
+          });
+        }
+
+        setIsWebcamLive(true);
+        setWebcamError("");
+        console.info("📹  [Webcam] Retro camera feed live");
+      } catch (error) {
+        setIsWebcamLive(false);
+        setWebcamError("Camera unavailable. Check browser permissions.");
+        console.warn("⚠️  [Webcam] Camera stream unavailable", error);
+      }
+    };
+
+    void startWebcam();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentLevel, exploded, hasStarted, releaseWebcam, won]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1371,11 +1467,12 @@ export default function Home() {
       stopNpcVoice();
       stopExplosionSound();
       releaseMicrophone();
+      releaseWebcam();
       if (bgmAudioRef.current) {
         bgmAudioRef.current.pause();
       }
     };
-  }, [clearIntroSequenceTimers, releaseMicrophone, stopExplosionSound, stopNpcVoice, stopRecording]);
+  }, [clearIntroSequenceTimers, releaseMicrophone, releaseWebcam, stopExplosionSound, stopNpcVoice, stopRecording]);
 
   const latestNpcLine = useMemo(() => {
     for (let i = history.length - 1; i >= 0; i -= 1) {
@@ -1393,15 +1490,6 @@ export default function Home() {
     if (!emotion || !Number.isFinite(score) || score <= 0) return null;
     return { emotion, score };
   }, [lastEmotionScores]);
-
-  const emotionConfidencePct = useMemo(() => {
-    const sourceScore =
-      typeof lastEmotionScore === "number" && Number.isFinite(lastEmotionScore)
-        ? lastEmotionScore
-        : topEmotionDetail?.score ?? null;
-    if (typeof sourceScore !== "number" || !Number.isFinite(sourceScore) || sourceScore <= 0) return null;
-    return Math.round(clamp(sourceScore, 0, 1) * 100);
-  }, [lastEmotionScore, topEmotionDetail]);
 
   const recognizedEmotion = lastEmotion ?? topEmotionDetail?.emotion ?? null;
   const recognizedEmotionVisual = recognizedEmotion ? EMOTION_VISUALS[recognizedEmotion] : null;
@@ -1653,6 +1741,37 @@ export default function Home() {
           )}
 
           {currentLevel === 1 && (
+            <div className="pointer-events-none absolute left-3 top-[30%] z-20 w-[26vw] min-w-[190px] max-w-[390px] -translate-x-[10px] -translate-y-1/2 md:left-8 md:w-[23vw] md:min-w-[220px]">
+              <div className="webcam-crt-frame rounded-xl border border-emerald-300/35 bg-slate-950/72 p-2 backdrop-blur-sm">
+                <div className="mb-2 flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.16em] text-emerald-100/90">
+                  <span>Cam 01</span>
+                  <span className={isWebcamLive ? "text-emerald-200" : "text-rose-200"}>
+                    {isWebcamLive ? "Live" : "No signal"}
+                  </span>
+                </div>
+                <div className="relative aspect-[4/3] overflow-hidden rounded-md border border-cyan-300/25 bg-slate-950/90">
+                  <video
+                    ref={attachWebcamVideo}
+                    autoPlay
+                    muted
+                    playsInline
+                    className={`webcam-crt-video h-full w-full object-cover ${isWebcamLive ? "opacity-100" : "opacity-0"}`}
+                  />
+                  <div className="webcam-crt-rgb absolute inset-0" />
+                  <div className="webcam-crt-scanlines absolute inset-0" />
+                  <div className="webcam-crt-noise absolute inset-0" />
+                  <div className="webcam-crt-vignette absolute inset-0" />
+                  {!isWebcamLive ? (
+                    <div className="absolute inset-0 flex items-center justify-center px-4 text-center font-mono text-[10px] uppercase tracking-[0.12em] text-emerald-100/90">
+                      {webcamError || "Allow webcam access for the live retro feed."}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {currentLevel === 1 && (
             <div className="absolute left-3 top-[58%] z-20 w-[32vw] max-w-[520px] min-w-[230px] -translate-x-[20px] -translate-y-1/2 origin-left scale-[1.2409] px-1 md:left-7 md:w-[29vw] md:px-0">
               <div className="relative mx-auto aspect-[1365/768] w-full">
                 <Image
@@ -1750,8 +1869,7 @@ export default function Home() {
                         textShadow: `0 0 8px ${recognizedEmotionVisual.glow}`
                       }}
                     >
-                      You sound {EMOTION_ADJECTIVES[recognizedEmotion]} {recognizedEmotionVisual.emoji}
-                      {emotionConfidencePct ? ` (${emotionConfidencePct}%)` : ""}
+                      You look {EMOTION_ADJECTIVES[recognizedEmotion]} {recognizedEmotionVisual.emoji}
                     </p>
                   ) : null}
                 </div>
