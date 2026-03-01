@@ -739,3 +739,17 @@ Original prompt: Build and iterate a playable web game in this workspace, valida
 
 - `npx tsc --noEmit` ✅
 - grep checks for stale level-1 fear-demand strings in evaluate route ✅
+
+## 2026-03-01 - Level 1 Bomb Input Click/Fourth-Digit Apply Fix (User Reported)
+
+- Fixed level-1 code input interaction in `app/page.tsx`:
+  - raised bomb panel layer from `z-20` to `z-30`
+  - forced `pointer-events-auto` on bomb wrapper and code input container
+  - goal: prevent overlapping scene layers from eating clicks/focus
+- Updated auto-submit behavior for code entry:
+  - when 4th digit is entered, `handleCodeSubmit(nextCode)` now runs immediately
+  - removed previous `setTimeout(70ms)` delay
+
+## 2026-03-01 - Validation (Bomb Input Fix)
+
+- `npx tsc --noEmit` ✅

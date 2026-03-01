@@ -1772,7 +1772,7 @@ export default function Home() {
           )}
 
           {currentLevel === 1 && (
-            <div className="absolute left-3 top-[58%] z-20 w-[32vw] max-w-[520px] min-w-[230px] -translate-x-[20px] -translate-y-1/2 origin-left scale-[1.2409] px-1 md:left-7 md:w-[29vw] md:px-0">
+            <div className="pointer-events-auto absolute left-3 top-[58%] z-30 w-[32vw] max-w-[520px] min-w-[230px] -translate-x-[20px] -translate-y-1/2 origin-left scale-[1.2409] px-1 md:left-7 md:w-[29vw] md:px-0">
               <div className="relative mx-auto aspect-[1365/768] w-full">
                 <Image
                   src="/assets/bomb2.png"
@@ -1795,7 +1795,7 @@ export default function Home() {
                   </span>
                 </div>
 
-                <div className="absolute left-[35.4%] top-[57.5%] h-[10.9%] w-[14.9%]">
+                <div className="pointer-events-auto absolute left-[35.4%] top-[57.5%] h-[10.9%] w-[14.9%]">
                   <input
                     value={playerCodeInput}
                     onChange={(event) => {
@@ -1805,9 +1805,7 @@ export default function Home() {
                       if (nextCode.length === 4 && !exploded && !won) {
                         playCodeClick();
                         setStatusLine("Verifying code...");
-                        window.setTimeout(() => {
-                          handleCodeSubmit(nextCode);
-                        }, 70);
+                        handleCodeSubmit(nextCode);
                       }
                     }}
                     inputMode="numeric"
