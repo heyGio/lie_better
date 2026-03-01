@@ -9,7 +9,7 @@ The current build includes two playable scenarios:
 
 ## Context
 
-This project has been developed for the Mistral Worldwide Hackathon - Tokyo: a 32-hours hackathon hosted at Google for Startups offices in Shibuya, organized by Mistral AI. The team was composed by three hackers out of the 700 selected out of more than 7000 applicants in the 7 cities that hosted this hackathon at the same time.
+This project has been developed for the Mistral Worldwide Hackathon - Tokyo: a 32-hours hackathon hosted at Google for Startups offices in Shibuya, organized by Mistral AI. The team "GOLDEN G-AI" was composed by three hackers out of the 700 selected out of more than 7000 applicants in the 7 cities that hosted this hackathon at the same time.
 
 ## Why This Project Exists
 
